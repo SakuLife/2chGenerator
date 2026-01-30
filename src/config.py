@@ -22,6 +22,14 @@ GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 GOOGLE_CLIENT_SECRETS_FILE = os.getenv("GOOGLE_CLIENT_SECRETS_FILE", "client_secrets.json")
 GOOGLE_SERVICE_ACCOUNT = os.getenv("GOOGLE_SERVICE_ACCOUNT")
 
+# YouTube アップロード設定
+YOUTUBE_CATEGORY_ID = "22"  # People & Blogs
+YOUTUBE_PUBLISH_HOUR_JST = 18  # 予約投稿時刻（JST、時）
+YOUTUBE_DEFAULT_TAGS = [
+    "2ch", "2chまとめ", "5ch", "5chまとめ",
+    "ゆっくり", "名スレ", "面白いスレ", "まとめ動画",
+]
+
 # プロジェクトのルートディレクトリ
 ROOT_DIR = Path(__file__).parent.parent
 

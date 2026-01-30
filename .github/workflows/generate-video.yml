@@ -1,14 +1,22 @@
 name: Generate Video
 
 on:
+  schedule:
+    # 毎日 14:00 JST (05:00 UTC) に自動実行
+    - cron: '0 5 * * *'
   workflow_dispatch:
     inputs:
       theme:
-        description: '動画のテーマ'
-        required: true
+        description: '動画のテーマ（空欄でAI自動提案）'
+        required: false
         type: string
       no_images:
         description: '画像生成をスキップ'
+        required: false
+        type: boolean
+        default: true
+      upload:
+        description: 'YouTubeに予約投稿（18:00 JST）'
         required: false
         type: boolean
         default: true
@@ -55,19 +63,57 @@ jobs:
         shell: bash
         run: echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > service_account.json
 
+      # テーマ自動選定（cronまたはtheme未指定時）
+      - name: Auto-suggest theme
+        if: inputs.theme == '' || github.event_name == 'schedule'
+        id: theme
+        shell: bash
+        run: |
+          THEME=$(python -c "
+          import sys, json
+          sys.path.insert(0, 'src')
+          from theme_suggester import ThemeSuggester
+          from config import YOUTUBE_API_KEY
+          s = ThemeSuggester(youtube_api_key=YOUTUBE_API_KEY)
+          themes = s.suggest_themes(count=1)
+          print(themes[0] if themes else '今日あった面白い話')
+          ")
+          echo "THEME=$THEME" >> $GITHUB_OUTPUT
+
       - name: Generate video
         shell: bash
         run: |
-          ARGS="--theme \"${{ inputs.theme }}\" --auto"
-          if [ "${{ inputs.no_images }}" = "true" ]; then
+          # テーマ決定（手動指定 or 自動提案）
+          if [ -n "${{ inputs.theme }}" ]; then
+            THEME="${{ inputs.theme }}"
+          else
+            THEME="${{ steps.theme.outputs.THEME }}"
+          fi
+
+          ARGS="--theme \"$THEME\" --auto"
+
+          if [ "${{ inputs.no_images || 'true' }}" = "true" ]; then
             ARGS="$ARGS --no-images"
           fi
-          if [ "${{ inputs.record }}" = "true" ]; then
+
+          # YouTube アップロード（cron時は常にON）
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.upload }}" = "true" ]; then
+            ARGS="$ARGS --upload"
+          fi
+
+          # スプレッドシート記録（cron時は常にON）
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.record }}" = "true" ]; then
             ARGS="$ARGS --record"
           fi
+
           eval python main.py $ARGS
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
 
       - name: Upload video artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: generated-video

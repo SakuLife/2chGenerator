@@ -19,6 +19,7 @@ from src.config import (
     GOOGLE_SHEETS_ID,
     GOOGLE_DRIVE_FOLDER_ID,
     GOOGLE_SERVICE_ACCOUNT,
+    GOOGLE_CLIENT_SECRETS_FILE,
     ensure_directories,
 )
 from src.logger import logger, setup_logger
@@ -111,6 +112,18 @@ def main():
         "--record",
         action="store_true",
         help="生成完了後にスプレッドシートに記録",
+    )
+
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="生成後にYouTubeへアップロード（18:00 JST予約投稿）",
+    )
+
+    parser.add_argument(
+        "--upload-now",
+        action="store_true",
+        help="生成後にYouTubeへ即時公開アップロード",
     )
 
     args = parser.parse_args()
@@ -262,6 +275,26 @@ def main():
         logger.info(f"動画ファイル: {output_path}")
         logger.info(f"生成時間: {generation_time / 60:.1f}分")
 
+        # YouTubeアップロード
+        youtube_url = None
+        if args.upload or args.upload_now:
+            from src.youtube_uploader import upload_to_youtube
+
+            logger.info("=" * 60)
+            logger.info("  YouTubeアップロード中...")
+            logger.info("=" * 60)
+
+            try:
+                yt_result = upload_to_youtube(
+                    video_path=output_path,
+                    script_path=script_path,
+                    scheduled=not args.upload_now,
+                )
+                youtube_url = yt_result["url"]
+                logger.info(f"YouTube: {youtube_url} ({yt_result['status']})")
+            except Exception as e:
+                logger.error(f"YouTubeアップロードエラー: {e}")
+
         # 記録オプション
         if args.record and GOOGLE_SHEETS_ID:
             from src.video_tracker import VideoTracker
@@ -289,6 +322,7 @@ def main():
                 video_path=output_path,
                 video_duration=video_duration,
                 generation_time=generation_time,
+                youtube_url=youtube_url,
                 upload_to_drive=bool(GOOGLE_DRIVE_FOLDER_ID),
             )
 

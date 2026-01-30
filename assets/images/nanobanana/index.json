@@ -1,0 +1,43 @@
+{
+  "images": [
+    {
+      "filename": "nb_20260129_000818_0e809296.png",
+      "prompt": "\nIrasutoya illustration style, simple flat design, cute Japanese\nillustration, pastel colors, white background, no outlines,\nsoft rounded shapes, kawaii characters, minimal details,\ndeformed style with big head and small body\n, piggy bank with coins, saving money, simple illustration",
+      "tags": [
+        "money",
+        "piggy-bank",
+        "wealth",
+        "success",
+        "million",
+        "saving"
+      ],
+      "created_at": "2026-01-29T00:08:30.072088"
+    },
+    {
+      "filename": "nb_20260129_000830_747f11f1.png",
+      "prompt": "\nIrasutoya illustration style, simple flat design, cute Japanese\nillustration, pastel colors, white background, no outlines,\nsoft rounded shapes, kawaii characters, minimal details,\ndeformed style with big head and small body\n, money coins and yen bills, simple flat illustration, pastel colors",
+      "tags": [
+        "money",
+        "piggy-bank",
+        "wealth",
+        "success",
+        "million",
+        "saving"
+      ],
+      "created_at": "2026-01-29T00:08:41.204125"
+    },
+    {
+      "filename": "nb_20260129_000841_7a0814f0.png",
+      "prompt": "\nIrasutoya illustration style, simple flat design, cute Japanese\nillustration, pastel colors, white background, no outlines,\nsoft rounded shapes, kawaii characters, minimal details,\ndeformed style with big head and small body\n, happy businessman success, simple kawaii style illustration",
+      "tags": [
+        "money",
+        "piggy-bank",
+        "wealth",
+        "success",
+        "million",
+        "saving"
+      ],
+      "created_at": "2026-01-29T00:08:52.760187"
+    }
+  ]
+}

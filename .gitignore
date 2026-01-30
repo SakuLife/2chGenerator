@@ -1,0 +1,42 @@
+# Environment
+.env
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Generated files
+generated/
+
+# Assets内のメディアは許可（BGMのみ。背景動画は大きいのでLFS or 手動管理）
+!assets/**/*.mp3
+
+# 背景動画（GitHub 100MB制限超過のため除外）
+assets/images/backgrounds/*.mp4
+
+# Credentials / Secrets
+chgenerator-*.json
+client_secret_*.json
+*_token.json
+*.credentials.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Claude Code
+.claude/
+
+# Misc
+参考/

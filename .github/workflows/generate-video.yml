@@ -1,0 +1,89 @@
+name: Generate Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: '動画のテーマ'
+        required: true
+        type: string
+      no_images:
+        description: '画像生成をスキップ'
+        required: false
+        type: boolean
+        default: true
+      record:
+        description: 'スプレッドシートに記録'
+        required: false
+        type: boolean
+        default: true
+
+# セルフホステッドランナー（Windows）で実行
+# VOICEVOXはローカルWindowsマシンにインストール済みである必要がある
+jobs:
+  generate:
+    runs-on: self-hosted
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create .env from secrets
+        shell: bash
+        run: |
+          cat > .env << 'ENVEOF'
+          KIEAI_API_KEY=${{ secrets.KIEAI_API_KEY }}
+          KIEAI_API_BASE=https://api.kieai.net
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
+          GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}
+          GOOGLE_DRIVE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_SERVICE_ACCOUNT=service_account.json
+          ENVEOF
+
+      - name: Create service account file
+        shell: bash
+        run: echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > service_account.json
+
+      - name: Generate video
+        shell: bash
+        run: |
+          ARGS="--theme \"${{ inputs.theme }}\" --auto"
+          if [ "${{ inputs.no_images }}" = "true" ]; then
+            ARGS="$ARGS --no-images"
+          fi
+          if [ "${{ inputs.record }}" = "true" ]; then
+            ARGS="$ARGS --record"
+          fi
+          eval python main.py $ARGS
+
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-video
+          path: generated/*.mp4
+          retention-days: 7
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generation-logs
+          path: generated/logs/
+          retention-days: 30
+
+      - name: Cleanup secrets
+        if: always()
+        shell: bash
+        run: |
+          rm -f .env service_account.json

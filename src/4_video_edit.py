@@ -946,8 +946,12 @@ def calculate_subtitle_positions(
     """
     positions = []
     current_y = SUBTITLE_TOP_MARGIN
+    max_y = video_size[1] - 30  # 下部30pxマージン
 
     for sub in subtitles:
+        # 画面下端を超える場合は追加しない
+        if current_y + sub["height"] > max_y:
+            break
         x = SUBTITLE_LEFT_MARGIN
         y = current_y
         positions.append((x, y))
@@ -1252,12 +1256,23 @@ def create_video_with_stacked_subtitles(
         else:
             stack_subtitles.append(sub_data)
 
-    # 蓄積字幕をグループに分ける（MAX_VISIBLE_SUBTITLES個ずつ）
+    # 蓄積字幕をグループに分ける（画面高さに収まるように）
     subtitle_groups = []
     used_char_indices = set()
+    max_group_height = video_size[1] - SUBTITLE_TOP_MARGIN - 30  # 下部30pxマージン
 
-    for i in range(0, len(stack_subtitles), MAX_VISIBLE_SUBTITLES):
-        group = stack_subtitles[i:i + MAX_VISIBLE_SUBTITLES]
+    i = 0
+    while i < len(stack_subtitles):
+        group = []
+        total_height = 0
+        while i < len(stack_subtitles) and len(group) < MAX_VISIBLE_SUBTITLES:
+            sub = stack_subtitles[i]
+            added_height = sub["height"] + (SUBTITLE_STACK_MARGIN if group else 0)
+            if total_height + added_height > max_group_height and group:
+                break  # これ以上追加すると画面からはみ出す
+            group.append(sub)
+            total_height += added_height
+            i += 1
         if group:
             # グループの表示期間を計算
             group_start = group[0]["start_time"]
@@ -1464,9 +1479,13 @@ def create_video_with_stacked_subtitles(
         # グループ内の字幕を蓄積表示
         if current_group:
             current_y = SUBTITLE_TOP_MARGIN
+            max_y = video_size[1] - 30  # 下部30pxマージン
             for sub in current_group["subtitles"]:
                 # この字幕が始まっているかチェック
                 if sub["start_time"] <= t:
+                    # 画面下端を超える場合は描画しない
+                    if current_y + sub["height"] > max_y:
+                        break
                     img = sub["image"]
                     x = SUBTITLE_LEFT_MARGIN
                     y = current_y

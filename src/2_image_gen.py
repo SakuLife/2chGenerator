@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 import requests
-from openai import OpenAI
 
 from config import (
     OPENAI_API_KEY,
@@ -25,10 +24,14 @@ from logger import logger
 from image_cache import image_cache
 from kieai_client import KieAIClient
 
-# OpenAIクライアント（初期化はAPIキーがある場合のみ）
+# OpenAIクライアント（遅延初期化: openaiパッケージはオプション）
 openai_client = None
 if OPENAI_API_KEY:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        from openai import OpenAI
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    except ImportError:
+        logger.warning("openaiパッケージ未インストール。DALL-E生成は無効です。")
 
 # KieAIクライアント（初期化はAPIキーがある場合のみ）
 kieai_client = None

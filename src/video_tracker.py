@@ -9,8 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# Skills/google を使えるようにパスを追加
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Skills を使えるようにパスを追加（リポジトリ内 → 共有フォルダの順で探索）
+sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(1, str(Path(__file__).parent.parent.parent))
 
 from Skills.google import SheetsClient, DriveClient, YouTubeDataClient, GoogleAuth
 

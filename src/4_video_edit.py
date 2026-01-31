@@ -1641,6 +1641,7 @@ def create_video_from_script(
         audio_codec="aac",
         preset="medium",
         threads=4,
+        logger=None,
     )
 
     # 背景動画クリップをクリーンアップ

@@ -287,6 +287,7 @@ def main():
             try:
                 yt_result = upload_to_youtube(
                     video_path=output_path,
+                    theme=args.theme,
                     script_path=script_path,
                     scheduled=not args.upload_now,
                 )

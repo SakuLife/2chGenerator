@@ -31,25 +31,41 @@ from logger import logger
 JST = timezone(timedelta(hours=9))
 
 
-def _load_script_data(script_path: Path) -> dict:
-    """台本JSONを読み込む"""
-    with open(script_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def _extract_theme(script_path: Path) -> str:
+    """台本JSONからテーマを抽出（リスト/辞書両対応）"""
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # 辞書形式: {"theme": "...", "scenes": [...]}
+        if isinstance(data, dict):
+            return data.get("theme", "")
+
+        # リスト形式: [{"role": "narrator", "text": "..."}, ...]
+        # 最初のナレーターのテキストからテーマを推測
+        if isinstance(data, list) and data:
+            for scene in data:
+                if scene.get("role") == "title_card":
+                    return scene.get("text", "")
+    except Exception as e:
+        logger.warning(f"台本読み込みエラー: {e}")
+
+    return ""
 
 
-def generate_video_title(script_data: dict) -> str:
+def generate_video_title(theme: str) -> str:
     """
-    台本データからYouTubeタイトルを生成
+    テーマからYouTubeタイトルを生成
 
     Args:
-        script_data: 台本JSONデータ
+        theme: 動画テーマ
 
     Returns:
         動画タイトル（最大100文字）
     """
-    theme = script_data.get("theme", "2chまとめ")
+    if not theme:
+        theme = "2chまとめ"
 
-    # テーマをそのままタイトルに使用（2ch風）
     title = f"【2ch】{theme}【ゆっくり】"
 
     # 100文字以内に収める
@@ -59,18 +75,16 @@ def generate_video_title(script_data: dict) -> str:
     return title
 
 
-def generate_video_description(script_data: dict) -> str:
+def generate_video_description(theme: str) -> str:
     """
-    台本データからYouTube説明文を生成
+    テーマからYouTube説明文を生成
 
     Args:
-        script_data: 台本JSONデータ
+        theme: 動画テーマ
 
     Returns:
         動画説明文
     """
-    theme = script_data.get("theme", "")
-
     lines = [
         f"▼ テーマ: {theme}",
         "",
@@ -88,20 +102,18 @@ def generate_video_description(script_data: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_tags(script_data: dict) -> list[str]:
+def generate_tags(theme: str) -> list[str]:
     """
-    台本データからタグを生成
+    テーマからタグを生成
 
     Args:
-        script_data: 台本JSONデータ
+        theme: 動画テーマ
 
     Returns:
         タグのリスト
     """
     tags = list(YOUTUBE_DEFAULT_TAGS)
 
-    # テーマからキーワードを追加
-    theme = script_data.get("theme", "")
     if theme:
         tags.append(theme)
 
@@ -138,6 +150,7 @@ def get_next_publish_time(hour_jst: int = None) -> datetime:
 
 def upload_to_youtube(
     video_path: Path,
+    theme: str | None = None,
     script_path: Path | None = None,
     publish_at: datetime | None = None,
     scheduled: bool = True,
@@ -149,7 +162,8 @@ def upload_to_youtube(
 
     Args:
         video_path: 動画ファイルのパス
-        script_path: 台本JSONファイルのパス（メタデータ生成用）
+        theme: 動画テーマ（優先使用）
+        script_path: 台本JSONファイルのパス（テーマ未指定時に参照）
         publish_at: 予約投稿日時（省略時は当日18:00 JST）
         scheduled: 予約投稿するか（Falseで即時公開）
         thumbnail_path: サムネイル画像のパス
@@ -158,20 +172,19 @@ def upload_to_youtube(
     Returns:
         {"video_id": str, "url": str, "status": str}
     """
-    # 台本データを読み込み
-    if script_path is None:
-        script_path = SCRIPTS_DIR / "script.json"
-
-    if script_path.exists():
-        script_data = _load_script_data(script_path)
-    else:
-        logger.warning(f"台本ファイルが見つかりません: {script_path}")
-        script_data = {"theme": "2chまとめ"}
+    # テーマ決定（引数 → 台本JSON → デフォルト）
+    if not theme:
+        if script_path is None:
+            script_path = SCRIPTS_DIR / "script.json"
+        if script_path.exists():
+            theme = _extract_theme(script_path)
+    if not theme:
+        theme = "2chまとめ"
 
     # メタデータ生成
-    title = generate_video_title(script_data)
-    description = generate_video_description(script_data)
-    tags = generate_tags(script_data)
+    title = generate_video_title(theme)
+    description = generate_video_description(theme)
+    tags = generate_tags(theme)
 
     logger.info(f"タイトル: {title}")
     logger.info(f"タグ: {', '.join(tags[:5])}...")
@@ -184,10 +197,8 @@ def upload_to_youtube(
     elif not scheduled:
         publish_at = None
 
-    # YouTubeクライアント初期化
-    secrets_file = client_secrets_file or str(GOOGLE_CLIENT_SECRETS_FILE)
-    auth = GoogleAuth(secrets_file, ROOT_DIR)
-    client = YouTubeUploadClient(auth=auth)
+    # YouTubeクライアント初期化（環境変数優先）
+    client = YouTubeUploadClient(client_secrets_file=client_secrets_file)
 
     # アップロード実行
     result = client.upload_video(

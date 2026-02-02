@@ -5,6 +5,8 @@ Gemini APIを使用して2ch/5ch風のスレッド台本をJSON形式で生成
 """
 
 import json
+import re
+import time
 from pathlib import Path
 
 import google.generativeai as genai
@@ -140,7 +142,7 @@ JSONのみを出力し、他の説明文は不要です。
 
 
 def _extract_json(content: str) -> list:
-    """レスポンスからJSONを抽出してパース"""
+    """レスポンスからJSONを抽出してパース（修復機能付き）"""
     content = content.strip()
 
     # マークダウンのコードブロックを削除
@@ -150,7 +152,47 @@ def _extract_json(content: str) -> list:
             content = content[4:]
         content = content.strip()
 
-    return json.loads(content)
+    # 1. そのままパースを試みる
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # 2. JSON修復を試みる
+    repaired = _repair_json(content)
+    return json.loads(repaired)
+
+
+def _repair_json(content: str) -> str:
+    """壊れたJSONを修復する"""
+    # 末尾のトレーリングカンマを除去
+    content = re.sub(r',\s*(\])', r'\1', content)
+    content = re.sub(r',\s*(\})', r'\1', content)
+
+    # 配列が閉じていない場合: 最後の完全なオブジェクト `}` まで切って `]` で閉じる
+    if content.startswith("[") and not content.rstrip().endswith("]"):
+        last_brace = content.rfind("}")
+        if last_brace > 0:
+            content = content[:last_brace + 1] + "\n]"
+
+    # オブジェクトの途中で切れている場合: 不完全な最後の要素を除去
+    try:
+        return content if json.loads(content) else content
+    except json.JSONDecodeError:
+        pass
+
+    # 最後の `},{` を探して、そこまでで閉じる
+    last_complete = content.rfind("},")
+    if last_complete > 0:
+        content = content[:last_complete + 1] + "\n]"
+        try:
+            json.loads(content)
+            return content
+        except json.JSONDecodeError:
+            pass
+
+    # それでもダメなら元のまま返す（呼び出し元でエラーになる）
+    return content
 
 
 def _summarize_story(entries: list) -> str:
@@ -228,17 +270,23 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
         common_rules=_COMMON_RULES,
     )
 
-    response1 = model.generate_content(prompt1, generation_config=gen_config)
-    p1_prompt, p1_comp, p1_total = _get_token_counts(response1)
-    total_prompt_tokens += p1_prompt
-    total_completion_tokens += p1_comp
+    part1 = None
+    for attempt in range(3):
+        response1 = model.generate_content(prompt1, generation_config=gen_config)
+        p1_prompt, p1_comp, p1_total = _get_token_counts(response1)
+        if attempt == 0:
+            total_prompt_tokens += p1_prompt
+            total_completion_tokens += p1_comp
 
-    try:
-        part1 = _extract_json(response1.text)
-    except json.JSONDecodeError as e:
-        logger.error(f"パート1 JSONパースエラー: {e}")
-        logger.error(f"レスポンス内容:\n{response1.text[:500]}")
-        raise
+        try:
+            part1 = _extract_json(response1.text)
+            break
+        except json.JSONDecodeError as e:
+            logger.warning(f"パート1 JSONパースエラー (試行{attempt + 1}/3): {e}")
+            if attempt == 2:
+                logger.error(f"レスポンス内容:\n{response1.text[:500]}")
+                raise
+            time.sleep(2)
 
     logger.info(f"パート1完了: {len(part1)}個のエントリ (トークン: {p1_total:,})")
 
@@ -256,17 +304,23 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
         common_rules=_COMMON_RULES,
     )
 
-    response2 = model.generate_content(prompt2, generation_config=gen_config)
-    p2_prompt, p2_comp, p2_total = _get_token_counts(response2)
-    total_prompt_tokens += p2_prompt
-    total_completion_tokens += p2_comp
+    part2 = None
+    for attempt in range(3):
+        response2 = model.generate_content(prompt2, generation_config=gen_config)
+        p2_prompt, p2_comp, p2_total = _get_token_counts(response2)
+        if attempt == 0:
+            total_prompt_tokens += p2_prompt
+            total_completion_tokens += p2_comp
 
-    try:
-        part2 = _extract_json(response2.text)
-    except json.JSONDecodeError as e:
-        logger.error(f"パート2 JSONパースエラー: {e}")
-        logger.error(f"レスポンス内容:\n{response2.text[:500]}")
-        raise
+        try:
+            part2 = _extract_json(response2.text)
+            break
+        except json.JSONDecodeError as e:
+            logger.warning(f"パート2 JSONパースエラー (試行{attempt + 1}/3): {e}")
+            if attempt == 2:
+                logger.error(f"レスポンス内容:\n{response2.text[:500]}")
+                raise
+            time.sleep(2)
 
     logger.info(f"パート2完了: {len(part2)}個のエントリ (トークン: {p2_total:,})")
 

@@ -101,6 +101,7 @@ class VideoTracker:
     def _ensure_sheet_exists(self, sheet_name: str) -> None:
         """シートが存在しない場合は作成してヘッダーを追加"""
         self._ensure_sheets()
+        self.sheets._ensure_service()
         service = self.sheets.service
 
         # スプレッドシートのメタデータを取得

@@ -22,6 +22,8 @@ from logger import logger
 SHEET_HEADERS = [
     "日時", "テーマ", "動画長", "生成時間",
     "ファイルパス", "YouTube URL", "再生数", "いいね数", "コメント数", "Drive URL",
+    "Geminiトークン", "Geminiコスト(円)", "KieAIクレジット",
+    "シーン数", "画像枚数", "台本生成(秒)", "画像生成(秒)", "音声生成(秒)",
 ]
 
 
@@ -126,6 +128,12 @@ class VideoTracker:
         youtube_url: str | None = None,
         upload_to_drive: bool = True,
         sheet_name: str = "動画制作ログ",
+        gemini_tokens: int = 0,
+        gemini_cost_jpy: float = 0,
+        kieai_credits: int = 0,
+        scene_count: int = 0,
+        image_count: int = 0,
+        step_times: dict | None = None,
     ) -> dict[str, Any]:
         """
         生成した動画を記録
@@ -138,10 +146,19 @@ class VideoTracker:
             youtube_url: YouTubeにアップロード済みの場合のURL
             upload_to_drive: Driveにアップロードするか
             sheet_name: 記録先シート名
+            gemini_tokens: Gemini API合計トークン数
+            gemini_cost_jpy: Gemini推定コスト（円）
+            kieai_credits: KieAIクレジット消費数
+            scene_count: 台本のシーン数
+            image_count: 生成した画像枚数
+            step_times: ステップ別所要時間 {"script": float, "image": float, "voice": float}
 
         Returns:
             記録結果
         """
+        if step_times is None:
+            step_times = {}
+
         result = {
             "theme": theme,
             "video_path": str(video_path),
@@ -184,6 +201,14 @@ class VideoTracker:
                 "",  # いいね数（後で更新）
                 "",  # コメント数（後で更新）
                 result["drive_url"] or "",
+                gemini_tokens or "",
+                f"{gemini_cost_jpy:.2f}" if gemini_cost_jpy else "",
+                kieai_credits or "",
+                scene_count or "",
+                image_count or "",
+                int(step_times.get("script", 0)) or "",
+                int(step_times.get("image", 0)) or "",
+                int(step_times.get("voice", 0)) or "",
             ]
 
             self.sheets.append_row(row_data, sheet_name)
@@ -225,7 +250,7 @@ class VideoTracker:
         logger.info("動画統計を更新中...")
 
         # 全行を取得
-        values = self.sheets.get_values(f"{sheet_name}!A:J")
+        values = self.sheets.get_values(f"{sheet_name}!A:R")
 
         if len(values) <= 1:
             logger.info("更新する動画がありません")
@@ -311,7 +336,7 @@ class VideoTracker:
         """
         self._ensure_sheets()
 
-        values = self.sheets.get_values(f"{sheet_name}!A:J")
+        values = self.sheets.get_values(f"{sheet_name}!A:R")
 
         if len(values) <= 1:
             return {"total_videos": 0}

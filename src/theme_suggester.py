@@ -1,10 +1,12 @@
 """
 テーマ提案モジュール
 YouTube競合分析 + 自チャンネル分析 + LLMによるテーマ生成
+過去テーマとの重複排除機能付き
 """
 
 import json
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import google.generativeai as genai
@@ -14,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(1, str(Path(__file__).parent.parent.parent))
 
 from Skills.google import YouTubeDataClient, YouTubeAnalyticsClient, GoogleAuth
+from Skills.google import SheetsClient
 
 from config import YOUTUBE_API_KEY, GEMINI_API_KEY, ROOT_DIR
 from logger import logger
@@ -49,16 +52,19 @@ class ThemeSuggester:
         self,
         youtube_api_key: str | None = None,
         client_secrets_file: str | None = None,
+        spreadsheet_id: str | None = None,
     ):
         """
         Args:
             youtube_api_key: YouTube Data API キー（競合分析用）
             client_secrets_file: OAuthクライアントシークレット（自チャンネル分析用）
+            spreadsheet_id: 記録用スプレッドシートID（重複排除用）
         """
         self.youtube_api_key = youtube_api_key
         self.client_secrets_file = client_secrets_file or str(
             ROOT_DIR / "client_secrets.json"
         )
+        self.spreadsheet_id = spreadsheet_id
 
         self.youtube_data: YouTubeDataClient | None = None
         self.youtube_analytics: YouTubeAnalyticsClient | None = None
@@ -148,11 +154,73 @@ class ThemeSuggester:
             logger.error(f"自チャンネル分析エラー: {e}")
             return None
 
+    def get_past_themes(self, days: int = 30) -> list[str]:
+        """
+        スプレッドシートから過去N日間のテーマを取得
+
+        Args:
+            days: 遡る日数（デフォルト30日）
+
+        Returns:
+            テーマ文字列のリスト
+        """
+        if not self.spreadsheet_id:
+            return []
+
+        try:
+            auth = GoogleAuth(self.client_secrets_file, ROOT_DIR)
+            sheets = SheetsClient(self.spreadsheet_id, auth=auth)
+            values = sheets.get_values("動画制作ログ!A:B")
+
+            if len(values) <= 1:
+                return []
+
+            cutoff = datetime.now() - timedelta(days=days)
+            past_themes = []
+
+            for row in values[1:]:  # ヘッダー行をスキップ
+                if len(row) < 2:
+                    continue
+                try:
+                    row_date = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+                    if row_date >= cutoff:
+                        past_themes.append(row[1])
+                except (ValueError, IndexError):
+                    continue
+
+            logger.info(f"過去{days}日間のテーマ: {len(past_themes)}件")
+            return past_themes
+
+        except Exception as e:
+            logger.warning(f"過去テーマ取得エラー（続行）: {e}")
+            return []
+
+    @staticmethod
+    def _is_similar(theme1: str, theme2: str, threshold: float = 0.6) -> bool:
+        """
+        2つのテーマが類似しているか判定（2-gram重複率ベース）
+
+        Args:
+            theme1: テーマ1
+            theme2: テーマ2
+            threshold: 類似と判定する重複率の閾値
+
+        Returns:
+            類似している場合True
+        """
+        if len(theme1) < 2 or len(theme2) < 2:
+            return False
+        set1 = set(theme1[i:i + 2] for i in range(len(theme1) - 1))
+        set2 = set(theme2[i:i + 2] for i in range(len(theme2) - 1))
+        overlap = len(set1 & set2) / min(len(set1), len(set2))
+        return overlap >= threshold
+
     def generate_themes_with_llm(
         self,
         competitor_data: dict | None = None,
         my_channel_data: dict | None = None,
         trending_data: list[dict] | None = None,
+        past_themes: list[str] | None = None,
         count: int = 10,
     ) -> list[str]:
         """
@@ -162,6 +230,7 @@ class ThemeSuggester:
             competitor_data: 競合分析データ
             my_channel_data: 自チャンネル分析データ
             trending_data: トレンドデータ
+            past_themes: 過去に使用したテーマ（重複排除用）
             count: 生成するテーマ数
 
         Returns:
@@ -187,6 +256,13 @@ class ThemeSuggester:
                 trend_titles.append(f"- {t['query']}: {t['top_video']['title']}")
             context_parts.append(f"【トレンド検索結果】\n" + "\n".join(trend_titles))
 
+        # 過去テーマを除外リストとして追加
+        if past_themes:
+            context_parts.append(
+                "【過去30日以内に使用済みのテーマ（これらと似た内容は避けること）】\n"
+                + "\n".join(past_themes)
+            )
+
         context = "\n\n".join(context_parts) if context_parts else "データなし"
 
         prompt = f"""あなたは2ch/5chまとめ系YouTubeチャンネルの企画担当です。
@@ -199,6 +275,7 @@ class ThemeSuggester:
 - 2chスレ風のタイトル（「〜した結果www」「〜なんだが」等）
 - 極端で感情を揺さぶる内容（大成功/大失敗、金持ち/貧乏）
 - 30代〜40代のサラリーマンが共感できるテーマ
+- 過去に使用済みのテーマとは異なる切り口・内容にすること
 
 # 出力形式
 テーマを1行1個で出力してください。番号や記号は不要です。
@@ -238,6 +315,8 @@ class ThemeSuggester:
         """
         テーマを提案（メイン関数）
 
+        過去30日以内に使用したテーマとの重複を排除する。
+
         Args:
             use_competitor_analysis: 競合分析を使用するか
             use_my_channel: 自チャンネル分析を使用するか
@@ -260,12 +339,36 @@ class ThemeSuggester:
         if use_trending:
             trending_data = self.search_trending()
 
-        return self.generate_themes_with_llm(
+        # 過去テーマを取得（重複排除用）
+        past_themes = self.get_past_themes(days=30)
+
+        # 多めに生成して重複を除外できるようにする
+        generate_count = count + len(past_themes) if past_themes else count
+
+        themes = self.generate_themes_with_llm(
             competitor_data=competitor_data,
             my_channel_data=my_channel_data,
             trending_data=trending_data,
-            count=count,
+            past_themes=past_themes,
+            count=generate_count,
         )
+
+        # 過去テーマとの類似度フィルタ
+        if past_themes:
+            filtered = []
+            for theme in themes:
+                if not any(self._is_similar(theme, past) for past in past_themes):
+                    filtered.append(theme)
+                else:
+                    logger.info(f"  除外（類似テーマあり）: {theme}")
+
+            if filtered:
+                themes = filtered
+                logger.info(f"重複排除後: {len(themes)}個")
+            else:
+                logger.warning("全テーマが類似判定。フィルタなしで返却")
+
+        return themes[:count]
 
 
 def main():

@@ -80,7 +80,7 @@ def generate_image_openai(prompt: str, output_path: Path) -> bool:
         return False
 
 
-def generate_image_kieai(prompt: str, output_path: Path) -> bool:
+def generate_image_kieai(prompt: str, output_path: Path) -> dict[str, bool | int]:
     """
     KieAI Nanobananaで画像生成（いらすとや風）
 
@@ -89,11 +89,11 @@ def generate_image_kieai(prompt: str, output_path: Path) -> bool:
         output_path: 保存先パス
 
     Returns:
-        成功したかどうか
+        {"success": bool, "kieai_credits": int}
     """
     if not kieai_client:
         logger.error("  エラー: KIEAI_API_KEYが設定されていません")
-        return False
+        return {"success": False, "kieai_credits": 0}
 
     try:
         # いらすとや風にプロンプトを変換
@@ -103,9 +103,9 @@ def generate_image_kieai(prompt: str, output_path: Path) -> bool:
         # キャッシュをチェック
         if image_cache.exists(styled_prompt):
             image_cache.get(styled_prompt, output_path)
-            return True
+            return {"success": True, "kieai_credits": 0}
 
-        # 新規生成
+        # 新規生成（Nanobanana通常版: 2クレジット/枚）
         kieai_client.generate_and_download(
             prompt=styled_prompt,
             output_path=output_path,
@@ -116,11 +116,11 @@ def generate_image_kieai(prompt: str, output_path: Path) -> bool:
         image_cache.save(styled_prompt, output_path)
 
         logger.info(f"  保存完了: {output_path.name}")
-        return True
+        return {"success": True, "kieai_credits": 2}
 
     except Exception as e:
         logger.error(f"  エラー: {e}")
-        return False
+        return {"success": False, "kieai_credits": 0}
 
 
 def generate_images_from_script(
@@ -147,6 +147,7 @@ def generate_images_from_script(
     logger.info(f"画像生成方法: {method.upper()}")
 
     image_map = {}
+    total_kieai_credits = 0
 
     for i, scene in enumerate(script):
         # image_promptがある場合のみ生成
@@ -168,7 +169,9 @@ def generate_images_from_script(
         if method == "openai":
             success = generate_image_openai(prompt, output_path)
         elif method == "kieai":
-            success = generate_image_kieai(prompt, output_path)
+            result = generate_image_kieai(prompt, output_path)
+            success = result["success"]
+            total_kieai_credits += result["kieai_credits"]
         else:
             logger.error(f"  エラー: 未対応の生成方法 '{method}'")
             continue
@@ -176,14 +179,18 @@ def generate_images_from_script(
         if success:
             image_map[i] = str(output_path)
 
-    logger.info(f"\n画像生成完了: {len(image_map)}枚")
+    logger.info(f"\n画像生成完了: {len(image_map)}枚 (KieAIクレジット: {total_kieai_credits})")
 
     # 画像マップをJSONで保存（動画編集時に使用）
     image_map_path = IMAGES_DIR / "image_map.json"
     with open(image_map_path, "w", encoding="utf-8") as f:
         json.dump(image_map, f, ensure_ascii=False, indent=2)
 
-    return image_map
+    return {
+        "image_map": image_map,
+        "image_count": len(image_map),
+        "kieai_credits": total_kieai_credits,
+    }
 
 
 if __name__ == "__main__":

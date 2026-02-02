@@ -242,7 +242,7 @@ def _wrap_theme_text(theme: str, max_chars: int = TITLE_MAX_CHARS_PER_LINE) -> l
 def generate_thumbnail(
     theme: str,
     output_path: Path | None = None,
-) -> Path:
+) -> dict:
     """
     サムネイル画像を生成
 
@@ -255,13 +255,15 @@ def generate_thumbnail(
         output_path: 出力パス（省略時は generated/thumbnail/thumbnail.jpg）
 
     Returns:
-        生成されたサムネイルのパス
+        dict: {"path": Path, "kieai_credits": int}
     """
     ensure_directories()
 
     if output_path is None:
         output_path = THUMBNAIL_DIR / "thumbnail.jpg"
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    kieai_credits = 0
 
     # 1. グラデーション背景を生成
     color_top, color_bottom = random.choice(GRADIENT_PATTERNS)
@@ -272,6 +274,8 @@ def generate_thumbnail(
     illust_path = _generate_illustration(theme, illustration_path)
 
     if illust_path and illust_path.exists():
+        # NanoBananaPro: 8クレジット (2K解像度)
+        kieai_credits = 8
         try:
             illust = Image.open(illust_path).convert("RGBA")
             # イラストをサムネイルサイズにリサイズ
@@ -332,4 +336,4 @@ def generate_thumbnail(
         illustration_path.unlink(missing_ok=True)
 
     logger.info(f"サムネイル生成完了: {output_path}")
-    return output_path
+    return {"path": output_path, "kieai_credits": kieai_credits}

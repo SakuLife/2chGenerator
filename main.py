@@ -146,7 +146,10 @@ def main():
 
         logger.info("[モード] テーマ提案")
 
-        suggester = ThemeSuggester(youtube_api_key=YOUTUBE_API_KEY)
+        suggester = ThemeSuggester(
+            youtube_api_key=YOUTUBE_API_KEY,
+            spreadsheet_id=GOOGLE_SHEETS_ID,
+        )
 
         themes = suggester.suggest_themes(
             use_competitor_analysis=bool(YOUTUBE_API_KEY),
@@ -227,6 +230,12 @@ def main():
             sys.exit(1)
 
         start_time = time.time()
+        step_times = {}
+        gemini_tokens = 0
+        gemini_cost_jpy = 0.0
+        kieai_credits = 0
+        scene_count = 0
+        image_count = 0
 
         logger.info(f"[モード] 全自動生成")
         logger.info(f"テーマ: {args.theme}")
@@ -239,7 +248,15 @@ def main():
         logger.info("=" * 60)
         logger.info("Step 1/4: 台本生成中...")
         logger.info("=" * 60)
-        script_data = script_gen.generate_script(args.theme)
+        t0 = time.time()
+        script_result = script_gen.generate_script(args.theme)
+        step_times["script"] = time.time() - t0
+
+        # generate_script() は dict を返す
+        script_data = script_result["script"]
+        gemini_tokens += script_result.get("gemini_tokens", 0)
+        gemini_cost_jpy += script_result.get("gemini_cost_jpy", 0)
+        scene_count = len(script_data)
         script_path = SCRIPTS_DIR / "script.json"
 
         # Step 2: 画像生成（スキップ可能）
@@ -247,7 +264,13 @@ def main():
             logger.info("=" * 60)
             logger.info("Step 2/4: 画像生成中...")
             logger.info("=" * 60)
-            image_gen.generate_images_from_script(script_path, method=args.image_method)
+            t0 = time.time()
+            image_result = image_gen.generate_images_from_script(
+                script_path, method=args.image_method
+            )
+            step_times["image"] = time.time() - t0
+            image_count = image_result.get("image_count", 0)
+            kieai_credits += image_result.get("kieai_credits", 0)
         else:
             logger.info("=" * 60)
             logger.info("Step 2/4: 画像生成をスキップしました")
@@ -257,7 +280,9 @@ def main():
         logger.info("=" * 60)
         logger.info("Step 3/4: 音声生成中...")
         logger.info("=" * 60)
+        t0 = time.time()
         voice_gen.generate_voices_from_script(script_path)
+        step_times["voice"] = time.time() - t0
 
         # Step 4: 動画生成
         logger.info("=" * 60)
@@ -274,6 +299,8 @@ def main():
         logger.info("=" * 60)
         logger.info(f"動画ファイル: {output_path}")
         logger.info(f"生成時間: {generation_time / 60:.1f}分")
+        logger.info(f"Geminiトークン: {gemini_tokens:,} (¥{gemini_cost_jpy:.2f})")
+        logger.info(f"KieAIクレジット: {kieai_credits}")
 
         # サムネイル生成
         thumbnail_path = None
@@ -284,7 +311,9 @@ def main():
             try:
                 from src.thumbnail_gen import generate_thumbnail
 
-                thumbnail_path = generate_thumbnail(args.theme)
+                thumb_result = generate_thumbnail(args.theme)
+                thumbnail_path = thumb_result["path"]
+                kieai_credits += thumb_result.get("kieai_credits", 0)
                 logger.info(f"サムネイル: {thumbnail_path}")
             except Exception as e:
                 logger.warning(f"サムネイル生成スキップ: {e}")
@@ -340,6 +369,12 @@ def main():
                 generation_time=generation_time,
                 youtube_url=youtube_url,
                 upload_to_drive=bool(GOOGLE_DRIVE_FOLDER_ID),
+                gemini_tokens=gemini_tokens,
+                gemini_cost_jpy=gemini_cost_jpy,
+                kieai_credits=kieai_credits,
+                scene_count=scene_count,
+                image_count=image_count,
+                step_times=step_times,
             )
 
             logger.info("記録完了！")

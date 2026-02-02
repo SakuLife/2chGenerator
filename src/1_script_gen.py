@@ -170,6 +170,30 @@ def _summarize_story(entries: list) -> str:
     return summary
 
 
+def _calc_gemini_cost_jpy(
+    prompt_tokens: int,
+    completion_tokens: int,
+    usd_to_jpy: float = 150.0,
+) -> float:
+    """Gemini 2.0 Flash の推定コスト（円）を算出"""
+    # Gemini 2.0 Flash: Input $0.10/1M, Output $0.40/1M
+    input_cost = prompt_tokens * 0.10 / 1_000_000
+    output_cost = completion_tokens * 0.40 / 1_000_000
+    return round((input_cost + output_cost) * usd_to_jpy, 2)
+
+
+def _get_token_counts(response) -> tuple[int, int, int]:
+    """Gemini レスポンスからトークン数を取得"""
+    try:
+        meta = response.usage_metadata
+        prompt_tokens = meta.prompt_token_count or 0
+        completion_tokens = meta.candidates_token_count or 0
+        total = meta.total_token_count or (prompt_tokens + completion_tokens)
+        return prompt_tokens, completion_tokens, total
+    except (AttributeError, TypeError):
+        return 0, 0, 0
+
+
 def generate_script(theme: str, output_filename: str = "script.json") -> dict:
     """
     テーマに基づいて台本を2パスで生成
@@ -179,7 +203,11 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
         output_filename: 出力ファイル名
 
     Returns:
-        生成された台本（list）
+        dict: {
+            "script": list[dict],    # 台本データ
+            "gemini_tokens": int,    # 合計トークン数
+            "gemini_cost_jpy": float # 推定コスト（円）
+        }
     """
     ensure_directories()
 
@@ -188,6 +216,9 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
         temperature=0.9,
         max_output_tokens=16000,
     )
+
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
 
     # ===== パート1: 前半生成 =====
     logger.info(f"テーマ「{theme}」で台本を生成中... (パート1/2: 前半)")
@@ -198,6 +229,9 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
     )
 
     response1 = model.generate_content(prompt1, generation_config=gen_config)
+    p1_prompt, p1_comp, p1_total = _get_token_counts(response1)
+    total_prompt_tokens += p1_prompt
+    total_completion_tokens += p1_comp
 
     try:
         part1 = _extract_json(response1.text)
@@ -206,7 +240,7 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
         logger.error(f"レスポンス内容:\n{response1.text[:500]}")
         raise
 
-    logger.info(f"パート1完了: {len(part1)}個のエントリ")
+    logger.info(f"パート1完了: {len(part1)}個のエントリ (トークン: {p1_total:,})")
 
     # ===== パート2: 後半生成 =====
     logger.info(f"台本を生成中... (パート2/2: 後半)")
@@ -223,6 +257,9 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
     )
 
     response2 = model.generate_content(prompt2, generation_config=gen_config)
+    p2_prompt, p2_comp, p2_total = _get_token_counts(response2)
+    total_prompt_tokens += p2_prompt
+    total_completion_tokens += p2_comp
 
     try:
         part2 = _extract_json(response2.text)
@@ -231,11 +268,9 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
         logger.error(f"レスポンス内容:\n{response2.text[:500]}")
         raise
 
-    logger.info(f"パート2完了: {len(part2)}個のエントリ")
+    logger.info(f"パート2完了: {len(part2)}個のエントリ (トークン: {p2_total:,})")
 
     # ===== マージ =====
-    # パート1の末尾がnarrator（場面転換）の場合はそのまま結合
-    # パート1末尾の重複narrator除去（パート2冒頭と被る場合）
     script = part1 + part2
 
     # ファイルに保存
@@ -243,10 +278,19 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(script, f, ensure_ascii=False, indent=2)
 
+    # トークン・コスト集計
+    gemini_tokens = total_prompt_tokens + total_completion_tokens
+    gemini_cost_jpy = _calc_gemini_cost_jpy(total_prompt_tokens, total_completion_tokens)
+
     logger.info(f"台本を生成しました: {output_path}")
     logger.info(f"合計シーン数: {len(script)}個 (前半{len(part1)} + 後半{len(part2)})")
+    logger.info(f"Geminiトークン: {gemini_tokens:,} (推定コスト: ¥{gemini_cost_jpy})")
 
-    return script
+    return {
+        "script": script,
+        "gemini_tokens": gemini_tokens,
+        "gemini_cost_jpy": gemini_cost_jpy,
+    }
 
 
 def load_script(filename: str = "script.json") -> dict:

@@ -113,8 +113,8 @@ jobs:
           logging.disable(logging.WARNING)
           sys.path.insert(0, 'src')
           from theme_suggester import ThemeSuggester
-          from config import YOUTUBE_API_KEY
-          s = ThemeSuggester(youtube_api_key=YOUTUBE_API_KEY)
+          from config import YOUTUBE_API_KEY, GOOGLE_SHEETS_ID
+          s = ThemeSuggester(youtube_api_key=YOUTUBE_API_KEY, spreadsheet_id=GOOGLE_SHEETS_ID)
           themes = s.suggest_themes(count=1)
           print(themes[0] if themes else '今日あった面白い話')
           " 2>/dev/null) || THEME="今日あった面白い話"

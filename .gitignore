@@ -42,5 +42,8 @@ nul
 # Claude Code
 .claude/
 
+# Logs
+logs/
+
 # Misc
 参考/

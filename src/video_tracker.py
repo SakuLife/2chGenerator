@@ -67,9 +67,14 @@ class VideoTracker:
                     self.spreadsheet_id,
                     service_account_file=self.service_account_file
                 )
-            else:
+            elif self.client_secrets_file:
                 auth = GoogleAuth(self.client_secrets_file, ROOT_DIR)
                 self.sheets = SheetsClient(self.spreadsheet_id, auth=auth)
+            else:
+                raise RuntimeError(
+                    "Sheets初期化に必要な認証情報がありません"
+                    "（service_account または client_secrets が必要）"
+                )
 
     def _ensure_drive(self):
         """Driveクライアントを初期化"""
@@ -79,9 +84,14 @@ class VideoTracker:
                     self.drive_folder_id,
                     service_account_file=self.service_account_file
                 )
-            else:
+            elif self.client_secrets_file:
                 auth = GoogleAuth(self.client_secrets_file, ROOT_DIR)
                 self.drive = DriveClient(self.drive_folder_id, auth=auth)
+            else:
+                raise RuntimeError(
+                    "Drive初期化に必要な認証情報がありません"
+                    "（service_account または client_secrets が必要）"
+                )
 
     def _ensure_youtube(self):
         """YouTubeクライアントを初期化"""

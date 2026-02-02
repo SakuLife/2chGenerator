@@ -350,6 +350,7 @@ def main():
                 spreadsheet_id=GOOGLE_SHEETS_ID,
                 drive_folder_id=GOOGLE_DRIVE_FOLDER_ID,
                 youtube_api_key=YOUTUBE_API_KEY,
+                client_secrets_file=GOOGLE_CLIENT_SECRETS_FILE,
             )
 
             # 動画の長さを取得（subtitles.jsonから）

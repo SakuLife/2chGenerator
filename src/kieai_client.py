@@ -206,6 +206,65 @@ class KieAIClient:
 
         raise RuntimeError(f"Task {task_id} timed out after {max_wait}s")
 
+    def generate_nanobanana_pro(
+        self,
+        prompt: str,
+        aspect_ratio: str = "16:9",
+        resolution: str = "2K",
+        output_format: str = "png",
+        max_wait: int = 600,
+        poll_interval: int = 10,
+    ) -> str:
+        """
+        NanoBanana Pro（高品質版）で画像を生成する
+
+        特徴:
+        - 高品質（テキスト描画がきれい）
+        - 解像度: 最大4K
+        - コスト: 8-16クレジット/枚
+
+        Args:
+            prompt: 画像のプロンプト
+            aspect_ratio: アスペクト比（16:9, 4:3, 1:1など）
+            resolution: 解像度（1K, 2K, 4K）
+            output_format: 出力形式（png, jpeg）
+            max_wait: 最大待機時間（秒）
+            poll_interval: ポーリング間隔（秒）
+
+        Returns:
+            生成された画像のURL
+        """
+        url = urljoin(self.api_base, self.NANOBANANA_ENDPOINT)
+
+        input_params = {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution,
+            "output_format": output_format,
+        }
+
+        payload = {
+            "model": "nano-banana-pro",
+            "input": input_params,
+        }
+
+        response = request_with_retry(
+            "POST",
+            url,
+            headers=self._headers(),
+            json_payload=payload,
+        )
+        data = response.json()
+
+        if data.get("code") != 200:
+            raise RuntimeError(f"NanoBanana Pro API error: {data}")
+
+        task_id = data.get("data", {}).get("taskId")
+        if not task_id:
+            raise RuntimeError(f"No taskId in response: {data}")
+
+        return self._poll_nanobanana_task(task_id, max_wait, poll_interval)
+
     def generate_and_download(
         self,
         prompt: str,
@@ -213,7 +272,7 @@ class KieAIClient:
         aspect_ratio: str = "16:9",
     ) -> Path:
         """
-        画像を生成してダウンロードする
+        画像を生成してダウンロードする（通常版）
 
         Args:
             prompt: 画像のプロンプト
@@ -224,4 +283,26 @@ class KieAIClient:
             ダウンロードしたファイルパス
         """
         image_url = self.generate_nanobanana(prompt, aspect_ratio)
+        return download_file(image_url, output_path)
+
+    def generate_pro_and_download(
+        self,
+        prompt: str,
+        output_path: Path,
+        aspect_ratio: str = "16:9",
+        resolution: str = "2K",
+    ) -> Path:
+        """
+        Pro版で画像を生成してダウンロードする
+
+        Args:
+            prompt: 画像のプロンプト
+            output_path: 保存先パス
+            aspect_ratio: アスペクト比
+            resolution: 解像度（1K, 2K, 4K）
+
+        Returns:
+            ダウンロードしたファイルパス
+        """
+        image_url = self.generate_nanobanana_pro(prompt, aspect_ratio, resolution)
         return download_file(image_url, output_path)

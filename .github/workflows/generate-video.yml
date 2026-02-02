@@ -2,7 +2,9 @@ name: Generate Video
 
 on:
   schedule:
-    # 毎日 14:00 JST (05:00 UTC) に自動実行
+    # 毎日 4:00 JST (19:00 UTC 前日) → 6:00 JST アップロード
+    - cron: '0 19 * * *'
+    # 毎日 14:00 JST (05:00 UTC) → 18:00 JST アップロード
     - cron: '0 5 * * *'
   workflow_dispatch:
     inputs:
@@ -76,22 +78,9 @@ jobs:
           YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
           GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}
           GOOGLE_DRIVE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          GOOGLE_SERVICE_ACCOUNT=service_account.json
           GOOGLE_CLIENT_SECRETS_FILE=client_secrets.json
           EOF
           sed -i 's/^[[:space:]]*//' .env
-
-      - name: Create service account file
-        continue-on-error: true
-        run: |
-          if [ -n "$SA_JSON" ]; then
-            printf '%s' "$SA_JSON" > service_account.json
-            echo "service_account.json created ($(wc -c < service_account.json) bytes)"
-          else
-            echo "GOOGLE_SERVICE_ACCOUNT_JSON not set, skipping"
-          fi
-        env:
-          SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
 
       - name: Write client_secrets.json
         continue-on-error: true
@@ -99,6 +88,20 @@ jobs:
           if [ -n "${{ secrets.GOOGLE_CLIENT_SECRETS_JSON_B64 }}" ]; then
             printf '%s' "${{ secrets.GOOGLE_CLIENT_SECRETS_JSON_B64 }}" | tr -d '\n\r' | base64 -d > client_secrets.json
           fi
+
+      - name: Write Google OAuth token (Drive/Sheets用)
+        continue-on-error: true
+        run: |
+          if [ -n "$TOKEN_B64" ]; then
+            printf '%s' "$TOKEN_B64" | tr -d '\n\r' | base64 -d > google_token.json
+            cp google_token.json drive_token.json
+            cp google_token.json sheets_token.json
+            echo "Google OAuth token files created"
+          else
+            echo "GOOGLE_TOKEN_JSON_B64 not set, skipping Drive/Sheets"
+          fi
+        env:
+          TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
 
       # テーマ自動選定（cronまたはtheme未指定時）
       - name: Auto-suggest theme
@@ -171,4 +174,4 @@ jobs:
 
       - name: Cleanup secrets
         if: always()
-        run: rm -f .env service_account.json client_secrets.json
+        run: rm -f .env service_account.json client_secrets.json google_token.json drive_token.json sheets_token.json

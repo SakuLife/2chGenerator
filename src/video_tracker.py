@@ -19,6 +19,12 @@ from config import ROOT_DIR, GENERATED_DIR, GOOGLE_SERVICE_ACCOUNT
 from logger import logger
 
 
+SHEET_HEADERS = [
+    "日時", "テーマ", "動画長", "生成時間",
+    "ファイルパス", "YouTube URL", "再生数", "いいね数", "コメント数", "Drive URL",
+]
+
+
 class VideoTracker:
     """動画記録・追跡クラス"""
 
@@ -78,6 +84,39 @@ class VideoTracker:
         if not self.youtube and self.youtube_api_key:
             self.youtube = YouTubeDataClient(api_key=self.youtube_api_key)
 
+    def _ensure_sheet_exists(self, sheet_name: str) -> None:
+        """シートが存在しない場合は作成してヘッダーを追加"""
+        self._ensure_sheets()
+        service = self.sheets.service
+
+        # スプレッドシートのメタデータを取得
+        metadata = service.spreadsheets().get(
+            spreadsheetId=self.spreadsheet_id,
+            fields="sheets.properties.title",
+        ).execute()
+
+        existing_names = [
+            s["properties"]["title"] for s in metadata.get("sheets", [])
+        ]
+
+        if sheet_name in existing_names:
+            return
+
+        # シートを新規作成
+        logger.info(f"シート '{sheet_name}' を作成中...")
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=self.spreadsheet_id,
+            body={
+                "requests": [
+                    {"addSheet": {"properties": {"title": sheet_name}}}
+                ]
+            },
+        ).execute()
+
+        # ヘッダー行を追加
+        self.sheets.append_row(SHEET_HEADERS, sheet_name)
+        logger.info(f"シート '{sheet_name}' を作成しヘッダーを追加しました")
+
     def record_video(
         self,
         theme: str,
@@ -127,6 +166,7 @@ class VideoTracker:
         self._ensure_sheets()
 
         try:
+            self._ensure_sheet_exists(sheet_name)
             # 時間を分:秒形式に変換
             duration_min = int(video_duration // 60)
             duration_sec = int(video_duration % 60)

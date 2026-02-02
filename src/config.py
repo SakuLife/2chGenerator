@@ -24,11 +24,14 @@ GOOGLE_SERVICE_ACCOUNT = os.getenv("GOOGLE_SERVICE_ACCOUNT")
 
 # YouTube アップロード設定
 YOUTUBE_CATEGORY_ID = "22"  # People & Blogs
-YOUTUBE_PUBLISH_HOUR_JST = 18  # 予約投稿時刻（JST、時）
+YOUTUBE_PUBLISH_HOURS_JST = [6, 18]  # 予約投稿時刻（JST、時） 午前/午後
 YOUTUBE_DEFAULT_TAGS = [
-    "2ch", "2chまとめ", "5ch", "5chまとめ",
-    "ゆっくり", "名スレ", "面白いスレ", "まとめ動画",
+    "2ch", "お金", "投資", "新NISA", "積立NISA", "FIRE",
+    "貯金", "節約", "有益スレ", "2ch有益スレ", "有益",
+    "2chお金スレ", "2chお金", "お金スレ", "面白いスレ",
+    "2ch面白いスレ", "ゆっくり", "2ちゃんねる", "ゆっくり解説",
 ]
+YOUTUBE_CHANNEL_URL = "www.youtube.com/@2ch_money_pro"
 
 # プロジェクトのルートディレクトリ
 ROOT_DIR = Path(__file__).parent.parent
@@ -50,6 +53,7 @@ BACKGROUND_IMAGES_DIR = ASSETS_DIR / "images" / "backgrounds"
 ICON_DIR = ASSETS_DIR / "images" / "icon"
 NANOBANANA_DIR = ASSETS_DIR / "images" / "nanobanana"  # KIEAI生成画像保存先
 INTRO_IMAGES_DIR = GENERATED_DIR / "intro_images"  # 冒頭用生成画像（一時）
+THUMBNAIL_DIR = GENERATED_DIR / "thumbnail"  # サムネイル出力先
 FONTS_DIR = ASSETS_DIR / "fonts"
 
 # 冒頭画像設定
@@ -187,5 +191,5 @@ def ensure_directories():
     """必要なディレクトリが存在しない場合は作成"""
     for directory in [SCRIPTS_DIR, VOICES_DIR, IMAGES_DIR, IMAGE_CACHE_DIR,
                       CHARACTER_IMAGES_DIR, BACKGROUND_IMAGES_DIR, ICON_DIR,
-                      NANOBANANA_DIR, INTRO_IMAGES_DIR]:
+                      NANOBANANA_DIR, INTRO_IMAGES_DIR, THUMBNAIL_DIR]:
         directory.mkdir(parents=True, exist_ok=True)

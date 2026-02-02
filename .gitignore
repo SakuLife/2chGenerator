@@ -21,7 +21,11 @@ assets/images/backgrounds/*.mp4
 # Credentials / Secrets
 chgenerator-*.json
 client_secret_*.json
+client_secrets.json
+service_account.json
 *_token.json
+google_token.json
+google_token_b64.txt
 *.credentials.json
 
 # IDE

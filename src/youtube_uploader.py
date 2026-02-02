@@ -21,7 +21,8 @@ from config import (
     SCRIPTS_DIR,
     YOUTUBE_CATEGORY_ID,
     YOUTUBE_DEFAULT_TAGS,
-    YOUTUBE_PUBLISH_HOUR_JST,
+    YOUTUBE_PUBLISH_HOURS_JST,
+    YOUTUBE_CHANNEL_URL,
     GOOGLE_CLIENT_SECRETS_FILE,
 )
 from logger import logger
@@ -86,17 +87,21 @@ def generate_video_description(theme: str) -> str:
         動画説明文
     """
     lines = [
-        f"▼ テーマ: {theme}",
+        "2chお金スレ、投資や貯金、節約など身近な内容を動画にまとめました。",
+        "コメントもお待ちしてます",
         "",
-        "2ch/5chの名スレをまとめた動画です。",
-        "面白いと思ったらチャンネル登録・高評価お願いします！",
+        "▼おすすめの関連動画はこちら",
         "",
-        "━━━━━━━━━━━━━━━━━━━━━━━",
-        "#2ch #2chまとめ #5ch #ゆっくり #名スレ",
-        "━━━━━━━━━━━━━━━━━━━━━━━",
+        "▼チャンネル登録はこちら",
+        YOUTUBE_CHANNEL_URL,
         "",
-        "※この動画は2ch/5chのスレッドを元に再構成したものです。",
-        "※登場人物は架空であり、実在の人物・団体とは関係ありません。",
+        "#2ch #お金 #投資 #新NISA #積立NISA #FIRE",
+        "#貯金 #節約 #有益スレ #2ch有益スレ #有益",
+        "#2chお金スレ #2chお金 #お金スレ #面白いスレ",
+        "#2ch面白いスレ #ゆっくり #2ちゃんねる #ゆっくり解説",
+        "",
+        "※2ch/5chの反応をまとめています",
+        "※あくまでも個人の意見であり、正確な情報は専門家や公式サイトでご確認ください。",
     ]
 
     return "\n".join(lines)
@@ -120,20 +125,36 @@ def generate_tags(theme: str) -> list[str]:
     return tags
 
 
-def get_next_publish_time(hour_jst: int = None) -> datetime:
+def get_next_publish_time(hour_jst: int | None = None) -> datetime:
     """
     次の予約投稿時刻を取得（JST → UTC変換済み）
 
+    現在時刻に応じて最も近い投稿時刻を自動選択:
+    - 午前（0:00〜11:59）→ 6:00 JST
+    - 午後（12:00〜23:59）→ 18:00 JST
+
     Args:
-        hour_jst: 公開時刻（JST、時）。省略時はconfig値を使用
+        hour_jst: 公開時刻（JST、時）。省略時は自動選択
 
     Returns:
         公開日時（UTC）
     """
-    if hour_jst is None:
-        hour_jst = YOUTUBE_PUBLISH_HOUR_JST
-
     now_jst = datetime.now(JST)
+
+    if hour_jst is None:
+        # 現在の時間帯に応じて次の投稿時刻を選択
+        hours = sorted(YOUTUBE_PUBLISH_HOURS_JST)
+        hour_jst = hours[0]  # デフォルトは最初の時刻
+        for h in hours:
+            candidate = now_jst.replace(
+                hour=h, minute=0, second=0, microsecond=0
+            )
+            if candidate > now_jst + timedelta(minutes=15):
+                hour_jst = h
+                break
+        else:
+            # 全て過ぎている場合は翌日の最初の時刻
+            hour_jst = hours[0]
 
     # 当日の指定時刻
     publish_jst = now_jst.replace(

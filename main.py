@@ -275,6 +275,20 @@ def main():
         logger.info(f"動画ファイル: {output_path}")
         logger.info(f"生成時間: {generation_time / 60:.1f}分")
 
+        # サムネイル生成
+        thumbnail_path = None
+        if args.upload or args.upload_now:
+            logger.info("=" * 60)
+            logger.info("  サムネイル生成中...")
+            logger.info("=" * 60)
+            try:
+                from src.thumbnail_gen import generate_thumbnail
+
+                thumbnail_path = generate_thumbnail(args.theme)
+                logger.info(f"サムネイル: {thumbnail_path}")
+            except Exception as e:
+                logger.warning(f"サムネイル生成スキップ: {e}")
+
         # YouTubeアップロード
         youtube_url = None
         if args.upload or args.upload_now:
@@ -290,6 +304,7 @@ def main():
                     theme=args.theme,
                     script_path=script_path,
                     scheduled=not args.upload_now,
+                    thumbnail_path=thumbnail_path,
                 )
                 youtube_url = yt_result["url"]
                 logger.info(f"YouTube: {youtube_url} ({yt_result['status']})")

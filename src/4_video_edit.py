@@ -831,7 +831,7 @@ def load_intro_images(video_size: tuple) -> list:
     spacing = 30
     total_width = sum(img.width for img in images) + spacing * (len(images) - 1)
     start_x = (video_size[0] - total_width) // 2
-    y = int(video_size[1] * 0.30)  # 画面の30%の位置
+    y = int(video_size[1] * 0.45)  # 画面の45%の位置（テーマテキストと被らないよう下に）
 
     result = []
     x = start_x

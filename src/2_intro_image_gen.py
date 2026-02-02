@@ -143,6 +143,15 @@ def generate_intro_images(
     tags = extract_tags_from_theme(theme)
     logger.info(f"テーマタグ: {tags}")
 
+    # 画像プールが20枚未満なら必ず新規生成（種類を増やす）
+    MIN_POOL_SIZE = 20
+    nb_images = list(NANOBANANA_DIR.glob("nb_*.png"))
+    pool_size = len(nb_images)
+
+    if pool_size < MIN_POOL_SIZE:
+        force_regenerate = True
+        logger.info(f"画像プール: {pool_size}/{MIN_POOL_SIZE} → 新規生成モード")
+
     # 既存画像を検索
     existing_images = []
     if not force_regenerate:

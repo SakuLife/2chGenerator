@@ -19,11 +19,13 @@ from config import ROOT_DIR, GENERATED_DIR, GOOGLE_SERVICE_ACCOUNT
 from logger import logger
 
 
+DEFAULT_SHEET_NAME = "生成ログ"
+
 SHEET_HEADERS = [
-    "日時", "テーマ", "動画長", "生成時間",
-    "ファイルパス", "YouTube URL", "再生数", "いいね数", "コメント数", "Drive URL",
-    "Geminiトークン", "Geminiコスト(円)", "KieAIクレジット",
-    "シーン数", "画像枚数", "台本生成(秒)", "画像生成(秒)", "音声生成(秒)",
+    "生成日時", "テーマ", "動画尺", "総生成時間",
+    "ファイル", "YouTube", "再生数", "いいね", "コメント", "Drive",
+    "Gemini tokens", "Gemini ¥", "KieAI cr",
+    "シーン数", "画像数", "台本(s)", "画像(s)", "音声(s)",
 ]
 
 
@@ -127,7 +129,7 @@ class VideoTracker:
         generation_time: float,
         youtube_url: str | None = None,
         upload_to_drive: bool = True,
-        sheet_name: str = "動画制作ログ",
+        sheet_name: str = DEFAULT_SHEET_NAME,
         gemini_tokens: int = 0,
         gemini_cost_jpy: float = 0,
         kieai_credits: int = 0,
@@ -221,7 +223,7 @@ class VideoTracker:
 
     def update_video_stats(
         self,
-        sheet_name: str = "動画制作ログ",
+        sheet_name: str = DEFAULT_SHEET_NAME,
         youtube_url_column: int = 5,  # F列（0始まり）
         views_column: int = 6,  # G列
         likes_column: int = 7,  # H列
@@ -323,7 +325,7 @@ class VideoTracker:
 
     def get_performance_report(
         self,
-        sheet_name: str = "動画制作ログ",
+        sheet_name: str = DEFAULT_SHEET_NAME,
     ) -> dict[str, Any]:
         """
         パフォーマンスレポートを生成

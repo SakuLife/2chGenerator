@@ -170,7 +170,8 @@ class ThemeSuggester:
         try:
             auth = GoogleAuth(self.client_secrets_file, ROOT_DIR)
             sheets = SheetsClient(self.spreadsheet_id, auth=auth)
-            values = sheets.get_values("動画制作ログ!A:B")
+            from video_tracker import DEFAULT_SHEET_NAME
+            values = sheets.get_values(f"{DEFAULT_SHEET_NAME}!A:B")
 
             if len(values) <= 1:
                 return []

@@ -88,7 +88,7 @@ def download_file(url: str, output_path: Path, timeout: int = 120) -> Path:
 class KieAIClient:
     """KieAI API クライアント（Nanobanana画像生成用）"""
 
-    DEFAULT_API_BASE = "https://api.kieai.net"
+    DEFAULT_API_BASE = "https://api.kie.ai"
     NANOBANANA_ENDPOINT = "/api/v1/jobs/createTask"
     NANOBANANA_QUERY_ENDPOINT = "/api/v1/jobs/recordInfo"
 

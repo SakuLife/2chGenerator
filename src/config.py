@@ -12,7 +12,7 @@ load_dotenv()
 # APIキー設定
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 KIEAI_API_KEY = os.getenv("KIEAI_API_KEY")
-KIEAI_API_BASE = os.getenv("KIEAI_API_BASE", "https://api.kieai.net")
+KIEAI_API_BASE = os.getenv("KIEAI_API_BASE", "https://api.kie.ai")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Gemini API（課金版）
 
 # YouTube / Google API設定

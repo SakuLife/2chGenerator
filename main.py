@@ -302,21 +302,20 @@ def main():
         logger.info(f"Geminiトークン: {gemini_tokens:,} (¥{gemini_cost_jpy:.2f})")
         logger.info(f"KieAIクレジット: {kieai_credits}")
 
-        # サムネイル生成
+        # サムネイル生成（毎回実行）
         thumbnail_path = None
-        if args.upload or args.upload_now:
-            logger.info("=" * 60)
-            logger.info("  サムネイル生成中...")
-            logger.info("=" * 60)
-            try:
-                from src.thumbnail_gen import generate_thumbnail
+        logger.info("=" * 60)
+        logger.info("  サムネイル生成中...")
+        logger.info("=" * 60)
+        try:
+            from src.thumbnail_gen import generate_thumbnail
 
-                thumb_result = generate_thumbnail(args.theme)
-                thumbnail_path = thumb_result["path"]
-                kieai_credits += thumb_result.get("kieai_credits", 0)
-                logger.info(f"サムネイル: {thumbnail_path}")
-            except Exception as e:
-                logger.warning(f"サムネイル生成スキップ: {e}")
+            thumb_result = generate_thumbnail(args.theme, script_path=script_path)
+            thumbnail_path = thumb_result["path"]
+            kieai_credits += thumb_result.get("kieai_credits", 0)
+            logger.info(f"サムネイル: {thumbnail_path}")
+        except Exception as e:
+            logger.warning(f"サムネイル生成スキップ: {e}")
 
         # YouTubeアップロード
         youtube_url = None

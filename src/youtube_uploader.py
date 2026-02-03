@@ -24,6 +24,8 @@ from config import (
     YOUTUBE_PUBLISH_HOURS_JST,
     YOUTUBE_CHANNEL_URL,
     GOOGLE_CLIENT_SECRETS_FILE,
+    GOOGLE_SHEETS_ID,
+    GOOGLE_SERVICE_ACCOUNT,
 )
 from logger import logger
 
@@ -58,6 +60,9 @@ def generate_video_title(theme: str) -> str:
     """
     テーマからYouTubeタイトルを生成
 
+    形式: {テーマ}【2chお金スレ】
+    テーマに既に【衝撃】【悲報】等がある場合はそのまま残す
+
     Args:
         theme: 動画テーマ
 
@@ -67,7 +72,11 @@ def generate_video_title(theme: str) -> str:
     if not theme:
         theme = "2chまとめ"
 
-    title = f"【2ch】{theme}【ゆっくり】"
+    # テーマに既に【2ch...】系タグがあれば末尾タグを省略
+    if "【2ch" in theme or "【２ch" in theme:
+        title = theme
+    else:
+        title = f"{theme}【2chお金スレ】"
 
     # 100文字以内に収める
     if len(title) > 100:
@@ -76,9 +85,56 @@ def generate_video_title(theme: str) -> str:
     return title
 
 
+def _fetch_related_videos() -> list[dict]:
+    """
+    スプレッドシートから過去動画を取得し、ランダムに1〜3本を返す
+    毎回異なる組み合わせになるよう重複回避
+    """
+    if not GOOGLE_SHEETS_ID:
+        return []
+
+    try:
+        from Skills.google import SheetsClient
+        import random
+
+        if GOOGLE_SERVICE_ACCOUNT:
+            sheets = SheetsClient(
+                GOOGLE_SHEETS_ID,
+                service_account_file=GOOGLE_SERVICE_ACCOUNT,
+            )
+        else:
+            return []
+
+        # B列(テーマ) 〜 F列(YouTube URL) を取得
+        values = sheets.get_values("生成ログ!B:F")
+        if not values or len(values) <= 1:
+            return []
+
+        # YouTube URLがある動画だけ収集
+        all_videos = []
+        for row in values[1:]:
+            if len(row) >= 5 and row[4] and "youtube.com" in row[4]:
+                all_videos.append({
+                    "theme": row[0],
+                    "url": row[4],
+                })
+
+        if not all_videos:
+            return []
+
+        # 1〜3本をランダムに選択（重複なし）
+        pick_count = min(random.randint(1, 3), len(all_videos))
+        return random.sample(all_videos, pick_count)
+
+    except Exception as e:
+        logger.warning(f"関連動画取得エラー: {e}")
+        return []
+
+
 def generate_video_description(theme: str) -> str:
     """
     テーマからYouTube説明文を生成
+    スプレッドシートから過去動画リンクを取得して関連動画セクションに追加
 
     Args:
         theme: 動画テーマ
@@ -90,8 +146,19 @@ def generate_video_description(theme: str) -> str:
         "2chお金スレ、投資や貯金、節約など身近な内容を動画にまとめました。",
         "コメントもお待ちしてます",
         "",
-        "▼おすすめの関連動画はこちら",
-        "",
+    ]
+
+    # スプレッドシートから過去動画リンクを取得
+    related = _fetch_related_videos()
+    if related:
+        lines.append("▼おすすめの関連動画はこちら")
+        for video in related:
+            title = generate_video_title(video["theme"])
+            lines.append(f"{title}")
+            lines.append(f"{video['url']}")
+        lines.append("")
+
+    lines.extend([
         "▼チャンネル登録はこちら",
         YOUTUBE_CHANNEL_URL,
         "",
@@ -99,10 +166,7 @@ def generate_video_description(theme: str) -> str:
         "#貯金 #節約 #有益スレ #2ch有益スレ #有益",
         "#2chお金スレ #2chお金 #お金スレ #面白いスレ",
         "#2ch面白いスレ #ゆっくり #2ちゃんねる #ゆっくり解説",
-        "",
-        "※2ch/5chの反応をまとめています",
-        "※あくまでも個人の意見であり、正確な情報は専門家や公式サイトでご確認ください。",
-    ]
+    ])
 
     return "\n".join(lines)
 

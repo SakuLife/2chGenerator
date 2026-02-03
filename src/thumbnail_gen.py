@@ -1,258 +1,451 @@
 """
 サムネイル自動生成モジュール
-KIEAI NanoBananaPro でイラスト生成 + PIL でテキスト合成
+参考: image copy 6.png スタイル（2chまとめ動画サムネイル）
+
+NanoBananaPro で全体を一発生成。PILフォールバック付き。
 """
 
+import json
 import os
 import platform
 import random
-import textwrap
+import re
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 
 from config import (
     KIEAI_API_KEY,
     KIEAI_API_BASE,
-    IRASUTOYA_STYLE_PREFIX,
     THUMBNAIL_DIR,
     FONTS_DIR,
+    SCRIPTS_DIR,
+    CHARACTER_IMAGES_DIR,
     ensure_directories,
 )
 from logger import logger
 
-# サムネイルサイズ（YouTube推奨）
-THUMBNAIL_WIDTH = 1280
-THUMBNAIL_HEIGHT = 720
-
-# テキスト設定
-TITLE_FONT_SIZE = 86
-TITLE_OUTLINE_WIDTH = 6
-TITLE_MAX_CHARS_PER_LINE = 12
-
-# グラデーション配色パターン（上, 下）
-GRADIENT_PATTERNS = [
-    ((255, 50, 50), (180, 0, 0)),       # 赤系
-    ((50, 120, 255), (0, 50, 180)),     # 青系
-    ((255, 180, 0), (220, 120, 0)),     # オレンジ系
-    ((0, 180, 100), (0, 120, 60)),      # 緑系
-    ((180, 50, 255), (100, 0, 180)),    # 紫系
-    ((255, 80, 120), (200, 30, 80)),    # ピンク系
-]
-
-# テーマ → イラストプロンプトのマッピング
-THEME_PROMPT_MAP = {
-    "貯金": "piggy bank overflowing with gold coins, yen money, saving concept",
-    "投資": "stock market chart going up, businessman celebrating, gold coins",
-    "資産": "pile of gold coins and money bags, wealth concept, treasure",
-    "節約": "wallet with yen bills, frugal lifestyle, money saving tips",
-    "給料": "salary envelope with yen, office worker, payday concept",
-    "借金": "empty wallet, debt concept, worried person with bills",
-    "副業": "laptop with money, side business, working from home concept",
-    "株": "stock market candlestick chart, bull market, investment success",
-    "不動産": "house with yen sign, real estate investment, property",
-    "FIRE": "person relaxing on beach, financial freedom, retirement celebration",
-    "老後": "elderly couple smiling, retirement savings, pension concept",
-    "結婚": "wedding couple, money planning, family finance",
-    "転職": "businessman with briefcase, career change, new job",
-    "年収": "salary chart going up, income growth, money stacks",
-    "NISA": "investment growth chart, NISA logo concept, coins growing",
-    "配当": "dividend income, money tree, passive income concept",
-    "1000万": "million yen pile, wealth milestone, golden coins stacked high",
-    "100万": "yen bills stack, savings goal achieved, celebration",
-}
-
-DEFAULT_PROMPT = "Japanese yen money coins and bills, finance concept, colorful illustration"
+# サイズ
+W = 1280
+H = 720
 
 
-def _get_bold_font(fontsize: int) -> ImageFont.FreeTypeFont:
-    """太字日本語フォントを取得"""
-    font = None
+# ====================================================================
+#  テーマ分割・テキスト準備
+# ====================================================================
 
-    if platform.system() == "Windows":
-        candidates = [
-            "C:/Windows/Fonts/meiryob.ttc",
-            "C:/Windows/Fonts/YuGothB.ttc",
-            "C:/Windows/Fonts/msgothic.ttc",
-        ]
-        for fp in candidates:
-            if os.path.exists(fp):
-                try:
-                    font = ImageFont.truetype(fp, fontsize)
-                    break
-                except (OSError, IOError):
-                    continue
-    elif platform.system() == "Darwin":
-        candidates = [
-            "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
-        ]
-        for fp in candidates:
-            if os.path.exists(fp):
-                try:
-                    font = ImageFont.truetype(fp, fontsize)
-                    break
-                except (OSError, IOError):
-                    continue
-    else:
-        candidates = [
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-        ]
-        for fp in candidates:
-            if os.path.exists(fp):
-                try:
-                    font = ImageFont.truetype(fp, fontsize, index=0)
-                    break
-                except (OSError, IOError):
-                    continue
+def _split_theme(theme: str) -> tuple[str, str | None]:
+    """テーマをタイトル部とフック部に分割"""
+    clean = re.sub(r'【[^】]*】', '', theme).strip()
 
-    # アセットフォントをフォールバック
-    asset_font = FONTS_DIR / "NotoSansJP-Bold.ttf"
-    if font is None and asset_font.exists():
+    for marker in ["方法が", "結果", "末路", "した結果", "だった"]:
+        idx = clean.find(marker)
+        if 0 < idx < len(clean) - 3:
+            return clean[:idx], clean[idx:]
+
+    if len(clean) > 16:
+        mid = len(clean) * 2 // 3
+        for sep in ["、", "で", "が", "を", "に", "は"]:
+            pos = clean[mid - 3:mid + 5].find(sep)
+            if pos >= 0:
+                c = mid - 3 + pos + 1
+                return clean[:c], clean[c:]
+        return clean[:mid], clean[mid:]
+
+    return clean, None
+
+
+def _extract_bubble_texts(script_path: Path | None, theme: str = "") -> list[str]:
+    """
+    台本から吹き出し用テキストを抽出（4-5本）
+    反応・質問系は除外し、具体的なデータ・ためになる情報だけ選ぶ
+    """
+    EXCLUDE_WORDS = [
+        "草", "www", "ww", "すげ", "すごい", "マジか", "マジで", "ガチ",
+        "ワロタ", "無理", "やばい", "ヤバい", "それな", "わかる",
+        "えぐ", "神", "天才", "参考になる", "真似できん", "羨ましい",
+        "うらやま", "欲しい", "つらい", "しんどい", "泣", "涙",
+        "怖い", "イメージ", "ワイも", "俺も", "頑張ろう", "みたい",
+    ]
+    QUESTION_ENDINGS = ["？", "?", "んやろ", "のか", "かな", "やろか", "かね"]
+
+    if script_path and script_path.exists():
         try:
-            font = ImageFont.truetype(str(asset_font), fontsize)
-        except (OSError, IOError):
-            pass
+            with open(script_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-    if font is None:
-        logger.warning("太字フォントが見つかりません。デフォルトフォントを使用")
-        font = ImageFont.load_default()
+            candidates = []
+            for scene in data:
+                role = scene.get("role", "")
+                text = scene.get("text", "")
+                if (role.startswith("res_") or role == "icchi") and 6 <= len(text) <= 30:
+                    if any(w in text for w in EXCLUDE_WORDS):
+                        continue
+                    if any(text.rstrip().endswith(q) for q in QUESTION_ENDINGS):
+                        continue
+                    candidates.append(text)
 
-    return font
+            if candidates:
+                scored = []
+                for t in candidates:
+                    score = 0
+                    digit_count = sum(1 for c in t if c.isdigit())
+                    if digit_count >= 3:
+                        score += 5
+                    elif digit_count >= 1:
+                        score += 3
+                    if any(w in t for w in ["万", "円", "年", "月", "%", "歳"]):
+                        score += 2
+                    if any(w in t for w in ["積立", "投資", "貯金", "節約", "固定費",
+                                             "手取り", "家賃", "食費", "保険", "NISA",
+                                             "iDeCo", "配当", "利回り", "資産"]):
+                        score += 2
+                    scored.append((score, t))
+
+                scored.sort(key=lambda x: x[0], reverse=True)
+                top = [t for s, t in scored if s >= 3][:10]
+                if len(top) >= 3:
+                    count = min(5, len(top))
+                    return random.sample(top[:8], count)
+
+        except Exception as e:
+            logger.warning(f"台本読込エラー: {e}")
+
+    # フォールバック（具体的データ・ためになる情報のみ）
+    return [
+        "年収600万で月15万貯金してる",
+        "固定費 月8万まで削った結果",
+        "ふるさと納税で年12万節約",
+        "積立NISA満額+iDeCoで月10万",
+        "30代で2000万は上位8%",
+    ]
 
 
-def _create_gradient_background(
-    width: int,
-    height: int,
-    color_top: tuple[int, int, int],
-    color_bottom: tuple[int, int, int],
-) -> Image.Image:
-    """グラデーション背景を生成"""
-    img = Image.new("RGB", (width, height))
-    draw = ImageDraw.Draw(img)
+def _mask_bubble_texts(texts: list[str]) -> list[str]:
+    """
+    吹き出しテキストの一部を●で隠してクリック誘導する
+    5本中2-3本をランダムにマスク。数字や名詞の一部を●に置換。
+    """
+    # マスク対象の数字パターン（数字を●に）
+    # 例: "月15万" → "月●●万", "年12万" → "年●●万"
+    def _mask_numbers(text: str) -> str:
+        """テキスト中の数字を●に置換（単位は残す）"""
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i].isdigit():
+                # 連続する数字を●に
+                j = i
+                while j < len(text) and text[j].isdigit():
+                    j += 1
+                result.append("●" * (j - i))
+                i = j
+            else:
+                result.append(text[i])
+                i += 1
+        return "".join(result)
 
-    for y in range(height):
-        ratio = y / height
-        r = int(color_top[0] + (color_bottom[0] - color_top[0]) * ratio)
-        g = int(color_top[1] + (color_bottom[1] - color_top[1]) * ratio)
-        b = int(color_top[2] + (color_bottom[2] - color_top[2]) * ratio)
-        draw.line([(0, y), (width, y)], fill=(r, g, b))
+    # マスク対象の名詞パターン（先頭の漢字2文字を●●に）
+    # 例: "固定費" → "●●費", "積立NISA" → "●●NISA"
+    NOUN_MASKS = {
+        "固定費": "●●費",
+        "ふるさと納税": "ふるさと●●",
+        "積立NISA": "●●NISA",
+    }
 
-    return img
+    def _mask_one(text: str) -> str:
+        """1つのテキストをマスク"""
+        # 名詞マスクを先に試す
+        for word, masked in NOUN_MASKS.items():
+            if word in text:
+                return text.replace(word, masked)
+        # 名詞マスクが無ければ数字マスク
+        return _mask_numbers(text)
+
+    if len(texts) <= 2:
+        return texts
+
+    # 2-3本をランダムにマスク対象に選ぶ
+    mask_count = random.randint(2, min(3, len(texts)))
+    mask_indices = set(random.sample(range(len(texts)), mask_count))
+
+    result = []
+    for i, text in enumerate(texts):
+        if i in mask_indices:
+            result.append(_mask_one(text))
+        else:
+            result.append(text)
+    return result
 
 
-def _build_prompt(theme: str) -> str:
-    """テーマからKIEAI NanoBananaPro用プロンプトを構築"""
-    subject = DEFAULT_PROMPT
-    for keyword, prompt_fragment in THEME_PROMPT_MAP.items():
-        if keyword in theme:
-            subject = prompt_fragment
-            break
+# ====================================================================
+#  NanoBananaPro 全体一発生成
+# ====================================================================
 
-    return (
-        f"YouTube thumbnail illustration. {subject}. "
-        f"{IRASUTOYA_STYLE_PREFIX}, "
-        "bright colorful background, high quality, "
-        "eye-catching design, no text, no letters, no words, "
-        "clean composition, professional thumbnail style"
-    )
+def _build_thumbnail_prompt(
+    title: str,
+    hook: str | None,
+    bubbles: list[str],
+) -> str:
+    """サムネイル生成用プロンプト（20:07版ベース + データ指示強化）"""
+    bubble_colors = [
+        "白い背景に細い黒枠",
+        "薄い紫の背景に細い暗色枠",
+        "薄い青の背景に細い暗色枠",
+        "薄い緑の背景に細い暗色枠",
+        "薄い黄色の背景に細い暗色枠",
+    ]
+    bubble_lines = []
+    for i, text in enumerate(bubbles[:5]):
+        color = bubble_colors[i % len(bubble_colors)]
+        bubble_lines.append(f"  - {color}の大きな吹き出し、中に太い黒文字で「{text}」")
+    bubble_section = "\n".join(bubble_lines)
+
+    hook_line = ""
+    if hook:
+        hook_line = f"- 画面下部25%: 非常に大きな太い赤文字（白縁取り）で「{hook}」"
+
+    return f"""日本語の2chまとめ動画のYouTubeサムネイル画像を作成してください。
+
+★重要: すべてのテキストは日本語で正確に描画してください。英語禁止。★
+
+レイアウト:
+- 画面上部20%: 非常に大きな太い黒文字（白縁取り付き）で「{title}」
+
+- 画面中央55%:
+  1. いらすとや風の日本人男性キャラクター（スーツ姿、驚いた表情）を中央に配置
+  2. キャラクターの周りに大きな吹き出しを5つ配置。吹き出しの中身は具体的な数字データ（感想やリアクションではなく、金額・割合・節約術などの有益情報）:
+{bubble_section}
+
+{hook_line}
+
+- 背景: 日本の一万円札が画面いっぱいに散らばっている
+
+スタイル:
+- 吹き出しはパステル/淡い色の背景に細い暗色枠、中は太い黒文字
+- 吹き出しの中身は「すごい」「草」「マジか」などの感想禁止。具体的な数字・金額・投資データなど有益情報のみ
+- 2chまとめ動画サムネイル風の情報量の多い構図
+- すべてのテキストは正確な日本語で"""
 
 
-def _generate_illustration(theme: str, output_path: Path) -> Path | None:
-    """KIEAI NanoBananaPro（高品質版）でイラストを生成"""
+def _generate_with_ai(prompt: str, output_path: Path) -> Path | None:
+    """NanoBananaPro Pro で画像生成"""
     if not KIEAI_API_KEY:
-        logger.warning("KIEAI_API_KEY が未設定のためイラスト生成をスキップ")
+        logger.warning("KIEAI_API_KEY が未設定")
         return None
 
     try:
         from kieai_client import KieAIClient
 
         client = KieAIClient(api_key=KIEAI_API_KEY, api_base=KIEAI_API_BASE)
-        prompt = _build_prompt(theme)
-        logger.info(f"サムネイルイラスト生成（NanoBananaPro）: {prompt[:80]}...")
+        logger.info("サムネイルAI生成中...")
+        logger.info(f"  プロンプト: {prompt[:100]}...")
 
-        image_path = client.generate_pro_and_download(
+        result = client.generate_pro_and_download(
             prompt=prompt,
             output_path=output_path,
             aspect_ratio="16:9",
             resolution="2K",
         )
-        logger.info(f"イラスト生成完了: {image_path}")
-        return image_path
+        logger.info(f"サムネイルAI生成完了: {result}")
+        return result
 
     except Exception as e:
-        logger.warning(f"イラスト生成失敗（フォールバックで続行）: {e}")
+        logger.warning(f"AI生成失敗: {e}")
         return None
 
 
-def _draw_text_with_outline(
-    draw: ImageDraw.ImageDraw,
-    position: tuple[int, int],
-    text: str,
-    font: ImageFont.FreeTypeFont,
-    fill: tuple[int, int, int] = (255, 255, 255),
-    outline_color: tuple[int, int, int] = (0, 0, 0),
-    outline_width: int = TITLE_OUTLINE_WIDTH,
-) -> None:
-    """縁取り付きテキストを描画"""
-    x, y = position
-    # 縁取り（8方向 + 太さ分）
-    for dx in range(-outline_width, outline_width + 1):
-        for dy in range(-outline_width, outline_width + 1):
-            if dx * dx + dy * dy <= outline_width * outline_width:
+# ====================================================================
+#  PIL フォールバック
+# ====================================================================
+
+BUBBLE_STYLES = [
+    {"bg": (255, 255, 255, 230), "border": (50, 50, 50)},
+    {"bg": (230, 220, 248, 230), "border": (80, 50, 110)},
+    {"bg": (215, 235, 255, 230), "border": (50, 80, 140)},
+    {"bg": (215, 248, 215, 230), "border": (50, 100, 50)},
+    {"bg": (255, 248, 215, 230), "border": (130, 100, 30)},
+]
+
+BUBBLE_LAYOUTS = [
+    (30, 155, 340),
+    (700, 135, 340),
+    (30, 340, 340),
+    (700, 320, 340),
+    (350, 260, 320),
+]
+
+
+def _get_bold_font(size: int) -> ImageFont.FreeTypeFont:
+    """太字日本語フォントを取得"""
+    asset = FONTS_DIR / "NotoSansJP-Bold.ttf"
+    if asset.exists():
+        try:
+            return ImageFont.truetype(str(asset), size)
+        except (OSError, IOError):
+            pass
+
+    if platform.system() == "Windows":
+        cands = ["C:/Windows/Fonts/meiryob.ttc", "C:/Windows/Fonts/YuGothB.ttc"]
+    elif platform.system() == "Darwin":
+        cands = ["/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc"]
+    else:
+        cands = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        ]
+
+    for fp in cands:
+        if os.path.exists(fp):
+            try:
+                return ImageFont.truetype(fp, size)
+            except (OSError, IOError):
+                continue
+
+    return ImageFont.load_default()
+
+
+def _draw_outlined_text(draw, xy, text, font, fill, outline_color, outline_w):
+    """縁取り付きテキスト"""
+    x, y = xy
+    for dx in range(-outline_w, outline_w + 1):
+        for dy in range(-outline_w, outline_w + 1):
+            if dx * dx + dy * dy <= outline_w * outline_w:
                 draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
-    # 本体テキスト
     draw.text((x, y), text, font=font, fill=fill)
 
 
-def _wrap_theme_text(theme: str, max_chars: int = TITLE_MAX_CHARS_PER_LINE) -> list[str]:
-    """テーマテキストを均等に折り返し"""
-    if len(theme) <= max_chars:
-        return [theme]
-
-    total = len(theme)
-    num_lines = (total + max_chars - 1) // max_chars
-    num_lines = min(num_lines, 4)
-    # 均等分割の目標文字数
-    target_per_line = (total + num_lines - 1) // num_lines
-
-    lines = []
-    remaining = theme
+def _wrap_text(text: str, max_chars: int) -> list[str]:
+    if len(text) <= max_chars:
+        return [text]
+    lines, remaining = [], text
     while remaining:
-        if len(remaining) <= target_per_line + 2:
+        if len(remaining) <= max_chars + 2:
             lines.append(remaining)
             break
-
-        cut_pos = target_per_line
-        # 自然な切れ目を前後で探す
-        best_cut = cut_pos
-        for sep in ["、", "。", "！", "？", "…", "w"]:
-            # 前方に探す
-            idx = remaining[:cut_pos + 3].rfind(sep)
-            if idx > cut_pos - 4 and idx > 0:
-                best_cut = idx + 1
+        cut = max_chars
+        best = cut
+        for sep in ["、", "で", "が", "を", "に", "は", "の", "と", "万", "…"]:
+            idx = remaining[cut - 3:cut + 3].find(sep)
+            if idx >= 0:
+                best = cut - 3 + idx + 1
                 break
-
-        lines.append(remaining[:best_cut])
-        remaining = remaining[best_cut:]
-
+        lines.append(remaining[:best])
+        remaining = remaining[best:]
     return lines[:4]
 
 
+def _generate_with_pil(
+    title: str,
+    hook: str | None,
+    bubbles: list[str],
+    output_path: Path,
+) -> None:
+    """PILフォールバック"""
+    logger.info("PILフォールバックでサムネイル生成中...")
+
+    bg = Image.new("RGB", (W, H))
+    draw = ImageDraw.Draw(bg)
+    for y in range(H):
+        r = 195 + 50 * y // H
+        g = 210 + 30 * y // H
+        b = 170 + 40 * y // H
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
+
+    # キャラクター（assetsから）
+    chars = list(CHARACTER_IMAGES_DIR.glob("*.png"))
+    if chars:
+        try:
+            char_img = Image.open(random.choice(chars)).convert("RGBA")
+            th = int(H * 0.50)
+            ratio = th / char_img.height
+            tw = min(int(char_img.width * ratio), int(W * 0.30))
+            ratio = tw / char_img.width
+            th = int(char_img.height * ratio)
+            char_img = char_img.resize((tw, th), Image.LANCZOS)
+            cx = (W - tw) // 2
+            cy = (H - th) // 2 + 20
+            bg.paste(char_img, (cx, cy), char_img)
+        except Exception:
+            pass
+
+    # 吹き出し
+    font_b = _get_bold_font(28)
+    for i, text in enumerate(bubbles[:min(5, len(BUBBLE_LAYOUTS))]):
+        bx, by, max_w = BUBBLE_LAYOUTS[i]
+        style = BUBBLE_STYLES[i % len(BUBBLE_STYLES)]
+        if len(text) > 18:
+            text = text[:16] + "…"
+        bbox = draw.textbbox((0, 0), text, font=font_b)
+        tw, th_t = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        px, py = 16, 10
+        x1, y1 = bx, by
+        draw.rounded_rectangle(
+            [x1, y1, x1 + tw + px * 2, y1 + th_t + py * 2],
+            radius=16, fill=style["bg"][:3], outline=style["border"], width=2,
+        )
+        draw.text((x1 + px, y1 + py), text, font=font_b, fill=(30, 30, 30))
+
+    # タイトル
+    font_t = _get_bold_font(60)
+    lines = _wrap_text(title, 15)
+    sizes = [draw.textbbox((0, 0), l, font=font_t) for l in lines]
+    sizes = [(s[2] - s[0], s[3] - s[1]) for s in sizes]
+    total_h = sum(h for _, h in sizes) + 8 * (len(sizes) - 1)
+    bg_rgba = bg.convert("RGBA")
+    banner = Image.new("RGBA", (W, total_h + 28), (255, 255, 255, 215))
+    bg_rgba.paste(banner, (0, 0), banner)
+    draw2 = ImageDraw.Draw(bg_rgba)
+    y_pos = 14
+    for i, line in enumerate(lines):
+        lw = sizes[i][0]
+        _draw_outlined_text(
+            draw2, ((W - lw) // 2, y_pos), line, font_t,
+            fill=(15, 15, 15), outline_color=(255, 255, 255), outline_w=4,
+        )
+        y_pos += sizes[i][1] + 8
+    bg.paste(bg_rgba.convert("RGB"))
+
+    # フック
+    if hook:
+        draw3 = ImageDraw.Draw(bg)
+        font_h = _get_bold_font(68)
+        hlines = _wrap_text(hook, 18)
+        hsizes = [draw3.textbbox((0, 0), l, font=font_h) for l in hlines]
+        hsizes = [(s[2] - s[0], s[3] - s[1]) for s in hsizes]
+        ht = sum(h for _, h in hsizes) + 8 * (len(hsizes) - 1)
+        y_pos = H - ht - 18
+        for i, line in enumerate(hlines):
+            lw = hsizes[i][0]
+            _draw_outlined_text(
+                draw3, ((W - lw) // 2, y_pos), line, font_h,
+                fill=(220, 20, 20), outline_color=(255, 255, 255), outline_w=6,
+            )
+            y_pos += hsizes[i][1] + 8
+
+    bg.save(output_path, "JPEG", quality=95)
+    logger.info(f"PILフォールバック完了: {output_path}")
+
+
+# ====================================================================
+#  メイン
+# ====================================================================
+
 def generate_thumbnail(
     theme: str,
+    script_path: Path | None = None,
     output_path: Path | None = None,
 ) -> dict:
     """
-    サムネイル画像を生成
+    image copy 6 スタイルのサムネイルを生成
 
-    1. KIEAI でテーマに合ったイラストを生成
-    2. グラデーション背景にイラストを合成
-    3. テーマ文を大きな縁取り文字で描画
+    NanoBananaPro で全体を一発生成（20:07版方式）
+    失敗時は PIL フォールバック
 
     Args:
         theme: 動画テーマ
-        output_path: 出力パス（省略時は generated/thumbnail/thumbnail.jpg）
+        script_path: 台本JSONパス（吹き出しテキスト用）
+        output_path: 出力パス
 
     Returns:
         dict: {"path": Path, "kieai_credits": int}
@@ -263,77 +456,39 @@ def generate_thumbnail(
         output_path = THUMBNAIL_DIR / "thumbnail.jpg"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if script_path is None:
+        script_path = SCRIPTS_DIR / "script.json"
+
+    # テーマ分割 & 吹き出しテキスト準備
+    title, hook = _split_theme(theme)
+    bubbles = _extract_bubble_texts(script_path, theme)
+    bubbles = _mask_bubble_texts(bubbles)
+    logger.info(f"タイトル: {title}")
+    logger.info(f"フック: {hook}")
+    logger.info(f"吹き出し: {bubbles}")
+
     kieai_credits = 0
 
-    # 1. グラデーション背景を生成
-    color_top, color_bottom = random.choice(GRADIENT_PATTERNS)
-    bg = _create_gradient_background(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, color_top, color_bottom)
+    # ── NanoBananaPro で全体生成 ──
+    prompt = _build_thumbnail_prompt(title, hook, bubbles)
+    ai_tmp = THUMBNAIL_DIR / "thumb_ai_tmp.png"
+    ai_result = _generate_with_ai(prompt, ai_tmp)
 
-    # 2. KIEAI でイラスト生成・合成
-    illustration_path = THUMBNAIL_DIR / "illustration_tmp.png"
-    illust_path = _generate_illustration(theme, illustration_path)
-
-    if illust_path and illust_path.exists():
-        # NanoBananaPro: 8クレジット (2K解像度)
-        kieai_credits = 8
+    if ai_result and ai_result.exists():
+        kieai_credits = 16
         try:
-            illust = Image.open(illust_path).convert("RGBA")
-            # イラストをサムネイルサイズにリサイズ
-            illust = illust.resize((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT), Image.LANCZOS)
-            # 半透明で合成（背景グラデーションが少し見える）
-            blended = Image.blend(bg.convert("RGBA"), illust, alpha=0.6)
-            bg = blended.convert("RGB")
+            img = Image.open(ai_result).convert("RGB")
+            img = img.resize((W, H), Image.LANCZOS)
+            img.save(output_path, "JPEG", quality=95)
+            logger.info(f"サムネイル生成完了（AI）: {output_path}")
         except Exception as e:
-            logger.warning(f"イラスト合成失敗: {e}")
-
-    # 3. 半透明の暗いオーバーレイ（テキスト読みやすくする）
-    overlay = Image.new("RGBA", (THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT), (0, 0, 0, 80))
-    bg_rgba = bg.convert("RGBA")
-    bg_rgba = Image.alpha_composite(bg_rgba, overlay)
-
-    # 4. テキスト描画
-    draw = ImageDraw.Draw(bg_rgba)
-    font = _get_bold_font(TITLE_FONT_SIZE)
-
-    lines = _wrap_theme_text(theme)
-
-    # 各行のサイズを計算
-    line_heights = []
-    line_widths = []
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        line_widths.append(bbox[2] - bbox[0])
-        line_heights.append(bbox[3] - bbox[1])
-
-    line_spacing = 16
-    total_text_height = sum(line_heights) + line_spacing * (len(lines) - 1)
-
-    # テキストをやや上寄りに配置（上35%あたり）
-    y_start = int((THUMBNAIL_HEIGHT - total_text_height) * 0.35)
-
-    for i, line in enumerate(lines):
-        line_w = line_widths[i]
-        x = (THUMBNAIL_WIDTH - line_w) // 2
-        y = y_start + sum(line_heights[:i]) + line_spacing * i
-
-        # 1行目は黄色、それ以降は白（参考サムネイルのスタイル）
-        text_color = (255, 215, 0) if i == 0 else (255, 255, 255)
-        _draw_text_with_outline(
-            draw,
-            (x, y),
-            line,
-            font,
-            fill=text_color,
-            outline_color=(0, 0, 0),
-        )
-
-    # 5. JPEG で保存
-    final = bg_rgba.convert("RGB")
-    final.save(output_path, "JPEG", quality=95)
+            logger.warning(f"AI画像読込失敗: {e}")
+            _generate_with_pil(title, hook, bubbles, output_path)
+    else:
+        _generate_with_pil(title, hook, bubbles, output_path)
 
     # 一時ファイル削除
-    if illustration_path.exists():
-        illustration_path.unlink(missing_ok=True)
+    if ai_tmp.exists():
+        ai_tmp.unlink(missing_ok=True)
 
-    logger.info(f"サムネイル生成完了: {output_path}")
     return {"path": output_path, "kieai_credits": kieai_credits}

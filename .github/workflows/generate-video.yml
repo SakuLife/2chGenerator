@@ -73,7 +73,7 @@ jobs:
         run: |
           cat > .env << EOF
           KIEAI_API_KEY=${{ secrets.KIEAI_API_KEY }}
-          KIEAI_API_BASE=https://api.kieai.net
+          KIEAI_API_BASE=https://api.kie.ai
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
           GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}

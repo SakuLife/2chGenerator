@@ -1333,10 +1333,13 @@ def create_video_with_stacked_subtitles(
     if icon_img:
         logger.info(f"アイコンを読み込みました")
 
-    # 最後のシーン用の別ポーズアイコンを読み込み
+    # 最後のシーン用の別ポーズアイコンを読み込み（ランダム選択）
     ending_icons = load_ending_icons()
+    selected_ending_icon = None
     if ending_icons:
-        logger.info(f"エンディング用アイコン: {len(ending_icons)}枚")
+        import random
+        selected_ending_icon = random.choice(ending_icons)
+        logger.info(f"エンディング用アイコン: {len(ending_icons)}枚からランダム選択")
 
     # 冒頭用画像を読み込み
     intro_images = load_intro_images(video_size)
@@ -1529,16 +1532,12 @@ def create_video_with_stacked_subtitles(
 
             if ending_start <= t < ending_end:
                 # 大きなアイコンを中央に揺らしながら表示
-                if ending_icons:
-                    # アイコンを選択（時間で切り替え可能）
-                    icon_idx = 0
-                    ending_icon = ending_icons[icon_idx]
-
+                if selected_ending_icon:
                     # 大きくリサイズ（画面高さの75%）
                     target_h = int(video_size[1] * 0.75)
-                    aspect = ending_icon.width / ending_icon.height
+                    aspect = selected_ending_icon.width / selected_ending_icon.height
                     target_w = int(target_h * aspect)
-                    large_icon = ending_icon.resize((target_w, target_h), Image.LANCZOS)
+                    large_icon = selected_ending_icon.resize((target_w, target_h), Image.LANCZOS)
 
                     # ふわふわエフェクト（キャラクターと同じ控えめな上下動）
                     # 周期3秒、振幅8pxの緩やかなsin波

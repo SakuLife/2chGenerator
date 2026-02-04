@@ -126,6 +126,13 @@ def main():
         help="生成後にYouTubeへ即時公開アップロード",
     )
 
+    parser.add_argument(
+        "--publish-hour",
+        type=int,
+        choices=[6, 18],
+        help="予約投稿時刻（JST）: 6 or 18",
+    )
+
     args = parser.parse_args()
 
     # ロガーを再設定（デバッグモード対応）
@@ -333,6 +340,7 @@ def main():
                     script_path=script_path,
                     scheduled=not args.upload_now,
                     thumbnail_path=thumbnail_path,
+                    publish_hour=args.publish_hour,
                 )
                 youtube_url = yt_result["url"]
                 logger.info(f"YouTube: {youtube_url} ({yt_result['status']})")

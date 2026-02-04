@@ -18,10 +18,19 @@ on:
         type: boolean
         default: true
       upload:
-        description: 'YouTubeに予約投稿（18:00 JST）'
+        description: 'YouTubeに予約投稿'
         required: false
         type: boolean
         default: true
+      publish_hour:
+        description: '投稿時刻（JST）: 6 or 18'
+        required: false
+        type: choice
+        options:
+          - 'auto'
+          - '6'
+          - '18'
+        default: 'auto'
       record:
         description: 'スプレッドシートに記録'
         required: false
@@ -121,6 +130,25 @@ jobs:
           echo "THEME=$THEME" >> $GITHUB_OUTPUT
           echo "Selected theme: $THEME"
 
+      - name: Determine publish hour
+        id: publish
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # cron トリガー時刻から投稿時刻を決定
+            # 19:00 UTC (4:00 JST) → 6:00 JST
+            # 05:00 UTC (14:00 JST) → 18:00 JST
+            HOUR_UTC=$(date -u +%H)
+            if [ "$HOUR_UTC" = "19" ]; then
+              echo "HOUR=6" >> $GITHUB_OUTPUT
+            else
+              echo "HOUR=18" >> $GITHUB_OUTPUT
+            fi
+          elif [ "${{ inputs.publish_hour }}" != "auto" ] && [ -n "${{ inputs.publish_hour }}" ]; then
+            echo "HOUR=${{ inputs.publish_hour }}" >> $GITHUB_OUTPUT
+          else
+            echo "HOUR=auto" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate video
         run: |
           # テーマ決定（手動指定 or 自動提案）
@@ -139,6 +167,10 @@ jobs:
           # YouTube アップロード（cron時は常にON）
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.upload }}" = "true" ]; then
             ARGS="$ARGS --upload"
+            # 投稿時刻を明示的に指定
+            if [ "${{ steps.publish.outputs.HOUR }}" != "auto" ]; then
+              ARGS="$ARGS --publish-hour ${{ steps.publish.outputs.HOUR }}"
+            fi
           fi
 
           # スプレッドシート記録（cron時は常にON）

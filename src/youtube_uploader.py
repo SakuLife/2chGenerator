@@ -122,8 +122,8 @@ def _fetch_related_videos() -> list[dict]:
         if not all_videos:
             return []
 
-        # 1〜3本をランダムに選択（重複なし）
-        pick_count = min(random.randint(1, 3), len(all_videos))
+        # 必ず1本以上、最大3本をランダムに選択（重複なし）
+        pick_count = min(max(1, random.randint(1, 3)), len(all_videos))
         return random.sample(all_videos, pick_count)
 
     except Exception as e:
@@ -241,6 +241,7 @@ def upload_to_youtube(
     scheduled: bool = True,
     thumbnail_path: Path | None = None,
     client_secrets_file: str | None = None,
+    publish_hour: int | None = None,
 ) -> dict[str, Any]:
     """
     動画をYouTubeにアップロード
@@ -249,10 +250,11 @@ def upload_to_youtube(
         video_path: 動画ファイルのパス
         theme: 動画テーマ（優先使用）
         script_path: 台本JSONファイルのパス（テーマ未指定時に参照）
-        publish_at: 予約投稿日時（省略時は当日18:00 JST）
+        publish_at: 予約投稿日時（省略時は自動選択）
         scheduled: 予約投稿するか（Falseで即時公開）
         thumbnail_path: サムネイル画像のパス
         client_secrets_file: OAuthクライアントシークレット
+        publish_hour: 予約投稿時刻（JST、6 or 18）。省略時は自動選択
 
     Returns:
         {"video_id": str, "url": str, "status": str}
@@ -276,7 +278,7 @@ def upload_to_youtube(
 
     # 予約投稿時刻
     if scheduled and publish_at is None:
-        publish_at = get_next_publish_time()
+        publish_at = get_next_publish_time(hour_jst=publish_hour)
         publish_jst = publish_at.astimezone(JST)
         logger.info(f"予約投稿: {publish_jst.strftime('%Y/%m/%d %H:%M')} JST")
     elif not scheduled:
@@ -299,4 +301,106 @@ def upload_to_youtube(
     logger.info(f"YouTube URL: {result['url']}")
     logger.info(f"ステータス: {result['status']}")
 
+    # 最初のコメントを投稿（チャンネル主のお手本コメント）
+    if result.get("video_id"):
+        try:
+            first_comment = generate_first_comment(theme)
+            if first_comment:
+                post_first_comment(client, result["video_id"], first_comment)
+        except Exception as e:
+            logger.warning(f"最初のコメント投稿エラー: {e}")
+
     return result
+
+
+def generate_first_comment(theme: str) -> str:
+    """
+    テーマに基づいて最初のコメント（チャンネル主のお手本）を生成
+
+    Args:
+        theme: 動画テーマ
+
+    Returns:
+        コメント文
+    """
+    theme_lower = theme.lower()
+
+    # テーマに応じたコメントパターン
+    if any(word in theme_lower for word in ["投資", "nisa", "株", "資産運用"]):
+        comments = [
+            "私は毎月3万円をインデックス投資に回してます！コツコツ続けるのが大事ですね💪",
+            "S&P500に毎月積立してます。10年後が楽しみ！みなさんの投資術も教えてください😊",
+            "新NISAでオルカン積立始めました！少額でも続けることが大切だと思ってます✨",
+        ]
+    elif any(word in theme_lower for word in ["節約", "食費", "生活費"]):
+        comments = [
+            "私はまとめ買い+作り置きで食費を月2万円に抑えてます！みなさんの節約術も知りたいです😊",
+            "水筒持参とお弁当で月1万円くらい浮いてます。小さな積み重ねが大事！",
+            "ふるさと納税フル活用してます！実質2000円で食費がかなり助かってます✨",
+        ]
+    elif any(word in theme_lower for word in ["貯金", "貯蓄", "貯める"]):
+        comments = [
+            "先取り貯金で毎月5万円を別口座に移してます！見えないところに置くのがコツですね💪",
+            "私は給料日に自動振替で貯金してます。気づいたら100万貯まってました😊",
+            "家計簿アプリで支出を見える化したら、無駄遣いが減りました！おすすめです✨",
+        ]
+    elif any(word in theme_lower for word in ["年収", "給料", "転職", "副業"]):
+        comments = [
+            "私も副業で月3万円くらい稼いでます。本業+αで生活にゆとりができました💪",
+            "転職して年収100万アップしました！行動することが大事ですね😊",
+            "スキルアップのために資格取得中です。自己投資も大切だと思ってます✨",
+        ]
+    elif any(word in theme_lower for word in ["住宅", "ローン", "家", "マイホーム"]):
+        comments = [
+            "私は頭金をしっかり貯めてから購入しました。焦らないことが大事ですね💪",
+            "変動金利で借りてますが、繰上げ返済も計画的にやってます😊",
+            "賃貸vs持ち家、私は賃貸派です！身軽さを優先してます✨",
+        ]
+    else:
+        comments = [
+            "とても参考になりました！私も実践してみます💪",
+            "いい話でした。みなさんの体験談もぜひ聞きたいです😊",
+            "コメント欄でいろんな意見が聞けると嬉しいです✨",
+        ]
+
+    import random
+    return random.choice(comments)
+
+
+def post_first_comment(client, video_id: str, comment_text: str) -> bool:
+    """
+    動画に最初のコメントを投稿
+
+    Args:
+        client: YouTubeクライアント
+        video_id: 動画ID
+        comment_text: コメント文
+
+    Returns:
+        成功したかどうか
+    """
+    try:
+        # YouTube Data API でコメント投稿
+        youtube = client._get_authenticated_service()
+
+        request = youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {
+                            "textOriginal": comment_text
+                        }
+                    }
+                }
+            }
+        )
+        response = request.execute()
+
+        logger.info(f"最初のコメントを投稿しました: {comment_text[:30]}...")
+        return True
+
+    except Exception as e:
+        logger.warning(f"コメント投稿失敗: {e}")
+        return False

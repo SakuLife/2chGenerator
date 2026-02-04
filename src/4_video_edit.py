@@ -72,26 +72,41 @@ from config import (
 )
 
 
-def get_background_video_path() -> Path | None:
+def get_all_background_videos() -> list[Path]:
     """
-    背景動画ファイルを取得
+    全ての背景動画ファイルを取得
 
     Returns:
-        動画ファイルのパス、なければNone
+        動画ファイルのパスリスト
     """
     from config import BACKGROUND_IMAGES_DIR
+    import random
 
-    # 検索するフォルダ（優先順）
-    search_dirs = [ASSET_IMAGES_DIR, BACKGROUND_IMAGES_DIR]
+    # 検索するフォルダ
+    search_dirs = [BACKGROUND_IMAGES_DIR, ASSET_IMAGES_DIR]
+    all_videos = []
 
     for search_dir in search_dirs:
         if not search_dir.exists():
             continue
         for ext in ["*.mp4", "*.mov", "*.avi", "*.webm"]:
-            videos = list(search_dir.glob(ext))
-            if videos:
-                return videos[0]
-    return None
+            all_videos.extend(search_dir.glob(ext))
+
+    # 重複除去してシャッフル
+    unique_videos = list(set(all_videos))
+    random.shuffle(unique_videos)
+    return unique_videos
+
+
+def get_background_video_path() -> Path | None:
+    """
+    背景動画ファイルを1つ取得（後方互換性のため維持）
+
+    Returns:
+        動画ファイルのパス、なければNone
+    """
+    videos = get_all_background_videos()
+    return videos[0] if videos else None
 
 
 def load_background_video(video_path: Path, target_size: tuple, total_duration: float):
@@ -125,6 +140,74 @@ def load_background_video(video_path: Path, target_size: tuple, total_duration: 
         video = video.subclipped(0, total_duration)
 
     return video
+
+
+def load_background_videos_for_scenes(
+    target_size: tuple,
+    scene_times: list[float],
+    total_duration: float
+) -> list[dict]:
+    """
+    シーンごとに異なる背景動画を読み込む
+
+    Args:
+        target_size: 目標サイズ (width, height)
+        scene_times: シーン切り替え時刻のリスト [0, t1, t2, ...]
+        total_duration: 総時間
+
+    Returns:
+        [{"clip": VideoFileClip, "start": float, "end": float}, ...]
+    """
+    from moviepy import VideoFileClip, vfx
+
+    all_videos = get_all_background_videos()
+    if not all_videos:
+        return []
+
+    # シーン区間を作成
+    scenes = []
+    for i, start_time in enumerate(scene_times):
+        end_time = scene_times[i + 1] if i + 1 < len(scene_times) else total_duration
+        scenes.append({"start": start_time, "end": end_time})
+
+    # 各シーンに動画を割り当て
+    result = []
+    for i, scene in enumerate(scenes):
+        video_path = all_videos[i % len(all_videos)]
+        scene_duration = scene["end"] - scene["start"]
+
+        try:
+            video = VideoFileClip(str(video_path))
+            video = video.without_audio()
+            video = video.resized(target_size)
+
+            # 必要な長さまでループ
+            if video.duration < scene_duration:
+                loops = int(scene_duration / video.duration) + 1
+                video = video.with_effects([vfx.Loop(n=loops)])
+            video = video.subclipped(0, scene_duration)
+
+            result.append({
+                "clip": video,
+                "start": scene["start"],
+                "end": scene["end"],
+                "path": video_path.name
+            })
+            logger.info(f"背景シーン{i+1}: {video_path.name} ({scene['start']:.1f}s - {scene['end']:.1f}s)")
+        except Exception as e:
+            logger.warning(f"背景動画読み込みエラー: {video_path.name} - {e}")
+            # エラー時は最初の動画でフォールバック
+            if result:
+                result.append({
+                    "clip": result[0]["clip"],
+                    "start": scene["start"],
+                    "end": scene["end"],
+                    "path": "fallback"
+                })
+
+    return result
+
+
 from logger import logger
 
 
@@ -199,7 +282,7 @@ def get_japanese_font(fontsize: int) -> ImageFont.FreeTypeFont:
 
 def smart_text_wrap(text: str, max_chars: int) -> list:
     """
-    読みやすい位置で改行するテキスト折り返し
+    読みやすい位置で改行するテキスト折り返し（禁則処理対応）
 
     Args:
         text: 折り返すテキスト
@@ -211,10 +294,12 @@ def smart_text_wrap(text: str, max_chars: int) -> list:
     if len(text) <= max_chars:
         return [text]
 
-    # 改行しやすい位置（優先度順）
-    # 句読点の後、助詞の後、記号の後
-    break_after = ["。", "！", "？", "、", "」", "）", "】", "』", "…", "ｗ", "w"]
-    break_before = ["「", "（", "【", "『"]
+    # 行頭禁則文字（これらは行頭に来てはいけない）
+    no_start = set("。、．，！？」』）】〉》・：；ー～…‥っゃゅょぁぃぅぇぉァィゥェォッャュョ")
+    # 行末禁則文字（これらは行末に来てはいけない）
+    no_end = set("「『（【〈《")
+    # 改行しやすい位置（句読点の後）
+    break_after = set("。！？、」』）】〉》…")
 
     lines = []
     current_line = ""
@@ -226,24 +311,37 @@ def smart_text_wrap(text: str, max_chars: int) -> list:
 
         # 最大文字数に達したら改行位置を探す
         if len(current_line) >= max_chars:
-            # 改行位置を後ろから探す
+            # 改行位置を後ろから探す（禁則処理を考慮）
             best_break = -1
 
-            # 改行後の文字をチェック
-            for j in range(len(current_line) - 1, max(0, len(current_line) - 8), -1):
-                if current_line[j] in break_after:
-                    best_break = j + 1
-                    break
-                if j + 1 < len(current_line) and current_line[j + 1] in break_before:
-                    best_break = j + 1
-                    break
+            for j in range(len(current_line) - 1, max(0, len(current_line) - 10), -1):
+                # j+1が次の行の先頭になる位置
+                if j + 1 < len(current_line):
+                    next_char = current_line[j + 1]
+                    curr_char = current_line[j]
+
+                    # 次の文字が行頭禁則文字ならこの位置では改行不可
+                    if next_char in no_start:
+                        continue
+                    # 現在の文字が行末禁則文字ならこの位置では改行不可
+                    if curr_char in no_end:
+                        continue
+
+                    # 句読点の後は改行しやすい
+                    if curr_char in break_after:
+                        best_break = j + 1
+                        break
+
+                    # 禁則に該当しない位置を候補として記録
+                    if best_break == -1:
+                        best_break = j + 1
 
             if best_break > 0 and best_break < len(current_line):
                 # 見つかった位置で改行
                 lines.append(current_line[:best_break])
                 current_line = current_line[best_break:]
             else:
-                # 見つからなければそのまま改行
+                # 見つからなければそのまま改行（禁則文字が連続している場合等）
                 lines.append(current_line)
                 current_line = ""
 
@@ -454,8 +552,8 @@ def create_theme_image(theme_text: str, video_size: tuple) -> Image.Image:
     max_width = int(video_size[0] * 0.50)
     max_chars = max(18, int(max_width / (THEME_FONT_SIZE * 0.6)))
 
-    # テキストを折り返し
-    lines = textwrap.wrap(theme_text, width=max_chars, break_long_words=True)
+    # テキストを折り返し（禁則処理対応）
+    lines = smart_text_wrap(theme_text, max_chars)
     if not lines:
         lines = [theme_text]
 
@@ -534,7 +632,7 @@ def create_intro_theme_image(theme_text: str, video_size: tuple) -> Image.Image:
     font = get_japanese_font(INTRO_THEME_FONT_SIZE)
 
     # 読みやすい位置で改行（助詞・フレーズ区切り優先）
-    lines = intro_theme_text_wrap(theme_text, target_chars=12)
+    lines = intro_theme_text_wrap(theme_text, target_chars=18)  # 横幅を広げる
     if not lines:
         lines = [theme_text]
 
@@ -594,8 +692,8 @@ def create_intro_narration_bar(text: str, video_size: tuple) -> Image.Image:
     # 最大文字数
     max_chars = 40
 
-    # テキストを折り返し
-    lines = textwrap.wrap(text, width=max_chars, break_long_words=True)
+    # テキストを折り返し（禁則処理対応）
+    lines = smart_text_wrap(text, max_chars)
     if not lines:
         lines = [text]
 
@@ -798,31 +896,38 @@ def load_intro_images(video_size: tuple) -> list:
     base_size = 512
     target_size = int(base_size * INTRO_IMAGE_SCALE / 2)
 
-    # intro_で始まるファイルを優先的に探す
+    # 全ての画像ファイルを収集してランダムに選択
+    import random
+    all_paths = []
     for search_dir in search_dirs:
         if not search_dir.exists():
             continue
         for ext in ["*.png", "*.jpg", "*.jpeg", "*.webp"]:
-            # intro_で始まるファイルを優先
-            for path in sorted(search_dir.glob(f"intro_*{ext[1:]}")):
-                if len(images) >= max_images:
-                    break
-                try:
-                    img = Image.open(path).convert("RGBA")
-                    aspect = img.width / img.height
-                    if aspect >= 1:
-                        new_width = target_size
-                        new_height = int(target_size / aspect)
-                    else:
-                        new_height = target_size
-                        new_width = int(target_size * aspect)
-                    img = img.resize((new_width, new_height), Image.LANCZOS)
-                    images.append(img)
-                    logger.info(f"冒頭画像読み込み: {path.name}")
-                except Exception:
-                    pass
+            # intro_* と nb_* の両方を検索
+            all_paths.extend(search_dir.glob(f"intro_*{ext[1:]}"))
+            all_paths.extend(search_dir.glob(f"nb_*{ext[1:]}"))
+
+    # 重複除去してシャッフル
+    all_paths = list(set(all_paths))
+    random.shuffle(all_paths)
+
+    for path in all_paths:
         if len(images) >= max_images:
             break
+        try:
+            img = Image.open(path).convert("RGBA")
+            aspect = img.width / img.height
+            if aspect >= 1:
+                new_width = target_size
+                new_height = int(target_size / aspect)
+            else:
+                new_height = target_size
+                new_width = int(target_size * aspect)
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+            images.append(img)
+            logger.info(f"冒頭画像読み込み: {path.name}")
+        except Exception:
+            pass
 
     if not images:
         return []
@@ -1077,54 +1182,68 @@ def extract_keywords_from_subtitles(subtitles: list) -> list:
     """
     keywords = []
     keyword_map = {
-        # お金関連
-        "貯金": ["money", "saving", "happy"],
-        "投資": ["invest", "stock", "money", "thinking"],
-        "借金": ["debt", "sad", "worry", "money"],
-        "節約": ["saving", "frugal", "money"],
-        "給料": ["salary", "work", "money"],
-        "収入": ["income", "money", "work"],
-        "支出": ["expense", "money"],
-        "万円": ["money"],
-        "円": ["money"],
-        # 感情
-        "嬉しい": ["happy", "joy", "smile"],
-        "悲しい": ["sad", "cry"],
-        "怒り": ["angry", "mad"],
-        "驚き": ["surprise", "shock"],
-        "困る": ["worry", "trouble", "thinking"],
-        "笑": ["happy", "laugh", "smile"],
-        "泣": ["sad", "cry"],
-        "怖い": ["fear", "worry"],
-        "楽しい": ["happy", "excited"],
-        # 結果
-        "成功": ["success", "happy", "celebrate"],
-        "失敗": ["fail", "sad", "worry"],
-        "勝ち": ["success", "happy", "celebrate"],
-        "負け": ["fail", "sad"],
-        "やった": ["success", "happy", "excited"],
-        "ダメ": ["fail", "sad", "worry"],
-        # 状況
-        "仕事": ["work", "thinking"],
-        "転職": ["work", "thinking", "worry"],
-        "結婚": ["love", "happy", "family"],
-        "恋愛": ["love", "happy"],
-        "別れ": ["sad", "love"],
-        "旅行": ["travel", "happy", "excited"],
-        "食事": ["food", "happy"],
-        "ゲーム": ["game", "happy", "excited"],
-        "勉強": ["study", "thinking"],
-        "健康": ["health", "worry"],
-        "病気": ["health", "sad", "worry"],
-        # 会話
-        "質問": ["question", "thinking"],
-        "答え": ["answer", "explain"],
-        "アドバイス": ["advice", "explain", "thinking"],
-        "相談": ["advice", "thinking", "worry"],
-        "説明": ["explain", "thinking"],
-        "なるほど": ["agree", "thinking", "nod"],
-        "そうだね": ["agree", "nod"],
-        "違う": ["disagree", "shake"],
+        # 自己紹介・人物関連（ファイル名: salaryman_money, kaisya_computer_man_side等）
+        "歳": ["salaryman", "man", "woman", "businessman"],
+        "年齢": ["man", "woman"],
+        "職業": ["salaryman", "kaisya", "computer", "man"],
+        "独身": ["man", "woman"],
+        "既婚": ["family", "relax"],
+        "会社員": ["salaryman", "kaisya", "computer", "man", "businessman"],
+        "エンジニア": ["salaryman", "kaisya", "computer", "man"],
+        "家族": ["family", "relax", "jitaku"],
+        # お金関連（ファイル名: money_satsutaba2, money_kariru_friend_man等）
+        "貯金": ["money", "salaryman", "happy"],
+        "投資": ["money", "salaryman", "megakuramu"],
+        "借金": ["kariru", "money", "boroboro", "wana"],
+        "節約": ["saifu", "money"],
+        "給料": ["salaryman", "money", "kaisya"],
+        "収入": ["salaryman", "money"],
+        "支出": ["saifu", "kara", "money", "fly"],
+        "年収": ["salaryman", "money", "man"],
+        "万円": ["money", "salaryman"],
+        "ローン": ["kariru", "money", "boroboro"],
+        "税金": ["zeikin", "money"],
+        # 感情（ファイル名: happy, pien, panic, angry等）
+        "嬉しい": ["happy", "tereru", "dance", "ukareru"],
+        "悲しい": ["pien", "uruuru", "boroboro"],
+        "怒り": ["angry", "fukureru"],
+        "驚き": ["ukkari", "panic"],
+        "困る": ["koshi", "nukeru", "kowai", "panic"],
+        "笑": ["happy", "warau", "tereru"],
+        "泣": ["pien", "uruuru"],
+        "怖い": ["kowai", "panic", "koshi"],
+        "楽しい": ["happy", "dance", "ukareru"],
+        "焦る": ["panic", "sick"],
+        "照れ": ["tereru", "happy", "smartphone"],
+        # 結果（ファイル名: seikou_syukufuku, boroboro等）
+        "成功": ["seikou", "syukufuku", "happy"],
+        "失敗": ["boroboro", "wana", "kara"],
+        "勝ち": ["seikou", "syukufuku"],
+        "負け": ["boroboro", "pien"],
+        "やった": ["seikou", "happy", "dance"],
+        "ダメ": ["boroboro", "pien", "kara"],
+        # 状況（ファイル名: kaisya_computer, jitaku_relax等）
+        "仕事": ["kaisya", "computer", "salaryman"],
+        "転職": ["kaisya", "salaryman"],
+        "結婚": ["family", "nakayoshi"],
+        "恋愛": ["nakayoshi", "happy"],
+        "パソコン": ["computer", "kaisya"],
+        "リラックス": ["relax", "jitaku"],
+        "ゲーム": ["game", "kakin"],
+        "課金": ["kakin", "game", "megakuramu"],
+        # 会話（ファイル名: friend_advice_man, friends_hagemasu等）
+        "教えて": ["advice", "friend"],
+        "アドバイス": ["advice", "friend", "hagemasu"],
+        "相談": ["advice", "friend"],
+        "応援": ["hagemasu", "ouuen", "friends"],
+        "頑張れ": ["hagemasu", "ouuen", "friends"],
+        "励まし": ["hagemasu", "friends", "businessman"],
+        "ありがとう": ["hagemasu", "syukufuku"],
+        "うっかり": ["ukkari", "pose"],
+        "ミス": ["ukkari", "panic"],
+        # ネットスラング
+        "草": ["warau", "happy"],
+        "ワロタ": ["warau", "happy"],
     }
 
     for sub in subtitles:
@@ -1155,13 +1274,13 @@ def create_video_with_stacked_subtitles(
         (total_duration, make_frame, audio_clips, bg_video) - 動画長、フレーム関数、音声リスト、背景動画
     """
     # 背景動画または画像を準備
-    bg_video_path = get_background_video_path()
-    bg_video_clip = None  # 後で設定（total_duration計算後）
-    use_video_background = bg_video_path is not None
+    all_bg_videos = get_all_background_videos()
+    bg_video_clips = []  # 複数背景用（後で設定）
+    use_video_background = len(all_bg_videos) > 0
     background_img = None  # 静止画用（動画背景時は使わない）
 
     if use_video_background:
-        logger.info(f"背景動画を使用: {bg_video_path.name}")
+        logger.info(f"背景動画: {len(all_bg_videos)}本検出")
     else:
         # 静止画背景
         background_path = ASSET_IMAGES_DIR / "background.png"
@@ -1283,7 +1402,7 @@ def create_video_with_stacked_subtitles(
             keywords = extract_keywords_from_subtitles(group)
             char_idx = select_character_for_context(all_char_images, keywords, used_char_indices)
 
-            # キャラクター画像と位置を設定
+            # キャラクター画像と位置を設定（右側5か所からランダム）
             char_img = None
             char_position = None
             if char_idx >= 0 and char_idx < len(all_char_images):
@@ -1291,9 +1410,21 @@ def create_video_with_stacked_subtitles(
                 char_data = all_char_images[char_idx]
                 char_img = char_data["image"]
                 char_x = video_size[0] - char_data["width"] - CHARACTER_RIGHT_MARGIN
-                char_y = video_size[1] - char_data["height"] - CHARACTER_BOTTOM_MARGIN
+                # 5つの縦位置パターン（上から下へ、テーマと被らないよう15%以下は避ける）
+                import random
+                y_positions = [
+                    int(video_size[1] * 0.18),   # 上寄り（18%）
+                    int(video_size[1] * 0.30),   # 中央上（30%）
+                    int(video_size[1] * 0.42),   # 中央（42%）
+                    int(video_size[1] * 0.55),   # 中央下（55%）
+                    video_size[1] - char_data["height"] - CHARACTER_BOTTOM_MARGIN,  # 下端
+                ]
+                char_y = random.choice(y_positions)
+                # 画面からはみ出さないよう調整
+                char_y = min(char_y, video_size[1] - char_data["height"] - 10)
+                char_y = max(char_y, 10)
                 char_position = (char_x, char_y)
-                logger.info(f"グループ{len(subtitle_groups)+1}: キャラクター={char_data['name']}")
+                logger.info(f"グループ{len(subtitle_groups)+1}: キャラクター={char_data['name']} Y={char_y}")
             elif default_char_img:
                 char_img = default_char_img
                 char_position = default_char_position
@@ -1318,11 +1449,6 @@ def create_video_with_stacked_subtitles(
         total_duration = last_sub["start_time"] + last_sub["duration"]
     else:
         total_duration = 5.0
-
-    # 背景動画を読み込み（総時間が決まってから）
-    if use_video_background:
-        bg_video_clip = load_background_video(bg_video_path, video_size, total_duration)
-        logger.info(f"背景動画を読み込み完了: {total_duration:.2f}秒")
 
     # フレームごとの画像を生成する関数
     import math
@@ -1356,14 +1482,43 @@ def create_video_with_stacked_subtitles(
     if mid_story_narrators:
         logger.info(f"中間ナレーター数: {len(mid_story_narrators)}")
 
+    # 背景動画を読み込み（総時間・シーン切り替えポイントが決まってから）
+    if use_video_background:
+        # シーン切り替えポイント: 冒頭→本編開始、中間ナレーターの位置
+        scene_times = [0.0, intro_end_time]
+        for narrator in mid_story_narrators[:3]:  # 最大3回の切り替え
+            scene_times.append(narrator["start_time"])
+        scene_times = sorted(set(scene_times))  # 重複除去・ソート
+
+        bg_video_clips = load_background_videos_for_scenes(video_size, scene_times, total_duration)
+        logger.info(f"背景シーン数: {len(bg_video_clips)}")
+
+    def get_background_frame(t):
+        """時刻tに対応する背景フレームを取得"""
+        if not bg_video_clips:
+            return None
+        # 該当するシーンを探す
+        for scene in bg_video_clips:
+            if scene["start"] <= t < scene["end"]:
+                local_t = t - scene["start"]
+                video_frame = scene["clip"].get_frame(local_t)
+                return Image.fromarray(video_frame).convert("RGBA")
+        # 見つからない場合は最後のシーン
+        last_scene = bg_video_clips[-1]
+        local_t = min(t - last_scene["start"], last_scene["clip"].duration - 0.01)
+        video_frame = last_scene["clip"].get_frame(max(0, local_t))
+        return Image.fromarray(video_frame).convert("RGBA")
+
     def make_frame(t):
         # ベース画像（背景）
-        if use_video_background and bg_video_clip:
-            # 動画フレームを取得
-            video_frame = bg_video_clip.get_frame(t)
-            frame = Image.fromarray(video_frame).convert("RGBA")
-            # 白オーバーレイを合成
-            frame = Image.alpha_composite(frame, white_overlay)
+        if use_video_background and bg_video_clips:
+            # 動画フレームを取得（シーンに応じた背景）
+            frame = get_background_frame(t)
+            if frame:
+                # 白オーバーレイを合成
+                frame = Image.alpha_composite(frame, white_overlay)
+            else:
+                frame = background_img.copy() if background_img else Image.new("RGBA", video_size, (40, 45, 55, 255))
         else:
             frame = background_img.copy()
 
@@ -1508,7 +1663,7 @@ def create_video_with_stacked_subtitles(
                 except Exception as e:
                     logger.warning(f"音声読み込みエラー [{idx}]: {e}")
 
-    return total_duration, make_frame, audio_clips, bg_video_clip
+    return total_duration, make_frame, audio_clips, bg_video_clips
 
 
 def create_video_from_script(
@@ -1582,7 +1737,7 @@ def create_video_from_script(
     logger.info("字幕蓄積表示で動画を生成中...")
 
     # 動画を作成
-    total_duration, make_frame, audio_clips, bg_video_clip = create_video_with_stacked_subtitles(
+    total_duration, make_frame, audio_clips, bg_video_clips = create_video_with_stacked_subtitles(
         subtitles_list,
         voice_map,
         theme_text,
@@ -1645,11 +1800,12 @@ def create_video_from_script(
     )
 
     # 背景動画クリップをクリーンアップ
-    if bg_video_clip:
-        try:
-            bg_video_clip.close()
-        except Exception:
-            pass
+    if bg_video_clips:
+        for scene in bg_video_clips:
+            try:
+                scene["clip"].close()
+            except Exception:
+                pass
 
     logger.info(f"\n動画生成完了！")
     logger.info(f"出力先: {output_path}")

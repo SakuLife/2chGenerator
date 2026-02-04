@@ -182,6 +182,82 @@ def _mask_bubble_texts(texts: list[str]) -> list[str]:
 #  NanoBananaPro 全体一発生成
 # ====================================================================
 
+def _get_character_variation(title: str) -> dict:
+    """
+    テーマに応じてキャラクターのバリエーションを決定（イッチを表現）
+
+    Returns:
+        {"appearance": str, "expression": str, "pose": str}
+    """
+    import random
+
+    title_lower = title.lower()
+
+    # 職業・外見パターン
+    appearances = [
+        "スーツを着た日本人男性サラリーマン",
+        "スーツを着た日本人女性OL",
+        "カジュアルな服装の若い日本人男性",
+        "カジュアルな服装の若い日本人女性",
+        "作業着を着た日本人男性",
+        "エプロンをつけた主婦",
+    ]
+
+    # テーマに応じた外見選択
+    if any(word in title_lower for word in ["主婦", "専業", "パート", "家計"]):
+        appearance = random.choice(["エプロンをつけた主婦", "カジュアルな服装の若い日本人女性"])
+    elif any(word in title_lower for word in ["ol", "女性", "独身女", "彼女"]):
+        appearance = "スーツを着た日本人女性OL"
+    elif any(word in title_lower for word in ["フリーランス", "副業", "在宅"]):
+        appearance = random.choice(["カジュアルな服装の若い日本人男性", "カジュアルな服装の若い日本人女性"])
+    elif any(word in title_lower for word in ["工場", "現場", "転職"]):
+        appearance = random.choice(["作業着を着た日本人男性", "スーツを着た日本人男性サラリーマン"])
+    else:
+        appearance = random.choice(appearances)
+
+    # 表情パターン
+    expressions = [
+        "驚いた表情",
+        "困った表情",
+        "嬉しそうな笑顔",
+        "考え込む表情",
+        "ドヤ顔",
+        "焦った表情",
+    ]
+
+    # テーマに応じた表情選択
+    if any(word in title_lower for word in ["成功", "貯め", "達成", "増え", "勝"]):
+        expression = random.choice(["嬉しそうな笑顔", "ドヤ顔"])
+    elif any(word in title_lower for word in ["失敗", "損", "減", "借金", "後悔"]):
+        expression = random.choice(["困った表情", "焦った表情"])
+    elif any(word in title_lower for word in ["衝撃", "驚", "まさか"]):
+        expression = "驚いた表情"
+    else:
+        expression = random.choice(expressions)
+
+    # ポーズパターン
+    poses = [
+        "正面を向いて立っている",
+        "腕を組んでいる",
+        "頭を抱えている",
+        "ガッツポーズをしている",
+        "指を立てて説明している",
+        "スマホを見ている",
+    ]
+
+    # テーマに応じたポーズ選択
+    if any(word in title_lower for word in ["成功", "達成", "勝"]):
+        pose = random.choice(["ガッツポーズをしている", "指を立てて説明している"])
+    elif any(word in title_lower for word in ["失敗", "損", "後悔"]):
+        pose = random.choice(["頭を抱えている", "正面を向いて立っている"])
+    elif any(word in title_lower for word in ["投資", "株", "nisa"]):
+        pose = random.choice(["スマホを見ている", "腕を組んでいる"])
+    else:
+        pose = random.choice(poses)
+
+    return {"appearance": appearance, "expression": expression, "pose": pose}
+
+
 def _build_thumbnail_prompt(
     title: str,
     hook: str | None,
@@ -205,6 +281,9 @@ def _build_thumbnail_prompt(
     if hook:
         hook_line = f"- 画面下部25%: 非常に大きな太い赤文字（白縁取り）で「{hook}」"
 
+    # テーマに応じたキャラクターバリエーション
+    char = _get_character_variation(title)
+
     return f"""日本語の2chまとめ動画のYouTubeサムネイル画像を作成してください。
 
 ★重要: すべてのテキストは日本語で正確に描画してください。英語禁止。★
@@ -213,15 +292,23 @@ def _build_thumbnail_prompt(
 - 画面上部20%: 非常に大きな太い黒文字（白縁取り付き）で「{title}」
 
 - 画面中央55%:
-  1. いらすとや風の日本人男性キャラクター（スーツ姿、驚いた表情）を中央に配置
+  1. 「いらすとや」スタイルのキャラクターを中央に配置
+     ★いらすとやスタイルの特徴（必須）:
+     - 丸い頭、ぽっちゃりした体型
+     - 太い黒い輪郭線（アウトライン）
+     - 目は小さな丸か点、シンプルな口
+     - フラットで明るい色使い（グラデーション禁止）
+     - {char['appearance']}
+     - {char['expression']}で{char['pose']}
   2. キャラクターの周りに大きな吹き出しを5つ配置。吹き出しの中身は具体的な数字データ（感想やリアクションではなく、金額・割合・節約術などの有益情報）:
 {bubble_section}
 
 {hook_line}
 
-- 背景: 日本の一万円札が画面いっぱいに散らばっている
+- 背景: 日本の一万円札（福沢諭吉）が画面いっぱいに散らばっている
 
 スタイル:
+- キャラクターは必ず「いらすとや」風のシンプルで可愛いイラスト（リアル調禁止）
 - 吹き出しはパステル/淡い色の背景に細い暗色枠、中は太い黒文字
 - 吹き出しの中身は「すごい」「草」「マジか」などの感想禁止。具体的な数字・金額・投資データなど有益情報のみ
 - 2chまとめ動画サムネイル風の情報量の多い構図
@@ -315,6 +402,72 @@ def _draw_outlined_text(draw, xy, text, font, fill, outline_color, outline_w):
     draw.text((x, y), text, font=font, fill=fill)
 
 
+def _parse_highlight_segments(text: str) -> list[tuple[str, bool]]:
+    """
+    テキストを強調部分と通常部分に分割
+
+    Returns:
+        [(text, is_highlight), ...]
+    """
+    import re
+    # 金額パターン: 数字+万/円/%/歳/年/ヶ月 等
+    pattern = r'(\d+(?:,\d+)*(?:\.\d+)?(?:万|円|%|歳|年|ヶ月|か月|カ月|倍|件|人|回|個|本|枚|kg|g|時間|分|秒|億|千万)?)'
+
+    segments = []
+    last_end = 0
+
+    for match in re.finditer(pattern, text):
+        # マッチ前の通常テキスト
+        if match.start() > last_end:
+            segments.append((text[last_end:match.start()], False))
+        # マッチした強調テキスト
+        segments.append((match.group(), True))
+        last_end = match.end()
+
+    # 残りの通常テキスト
+    if last_end < len(text):
+        segments.append((text[last_end:], False))
+
+    return segments if segments else [(text, False)]
+
+
+def _draw_highlighted_title(draw, center_x, y, text, font, outline_w):
+    """
+    金額・数字を強調色で描画するタイトル
+
+    Args:
+        draw: ImageDraw
+        center_x: 中央X座標
+        y: Y座標
+        text: テキスト
+        font: フォント
+        outline_w: 縁取り幅
+    """
+    segments = _parse_highlight_segments(text)
+
+    # 総幅を計算
+    total_width = 0
+    segment_widths = []
+    for seg_text, _ in segments:
+        bbox = draw.textbbox((0, 0), seg_text, font=font)
+        w = bbox[2] - bbox[0]
+        segment_widths.append(w)
+        total_width += w
+
+    # 開始X座標（中央揃え）
+    x = center_x - total_width // 2
+
+    # 各セグメントを描画
+    NORMAL_COLOR = (15, 15, 15)  # 通常: 黒
+    HIGHLIGHT_COLOR = (200, 30, 30)  # 強調: 赤
+    OUTLINE_COLOR = (255, 255, 255)  # 縁取り: 白
+
+    for i, (seg_text, is_highlight) in enumerate(segments):
+        fill = HIGHLIGHT_COLOR if is_highlight else NORMAL_COLOR
+        _draw_outlined_text(draw, (x, y), seg_text, font, fill, OUTLINE_COLOR, outline_w)
+        x += segment_widths[i]
+
+
 def _wrap_text(text: str, max_chars: int) -> list[str]:
     if len(text) <= max_chars:
         return [text]
@@ -398,11 +551,8 @@ def _generate_with_pil(
     draw2 = ImageDraw.Draw(bg_rgba)
     y_pos = 14
     for i, line in enumerate(lines):
-        lw = sizes[i][0]
-        _draw_outlined_text(
-            draw2, ((W - lw) // 2, y_pos), line, font_t,
-            fill=(15, 15, 15), outline_color=(255, 255, 255), outline_w=4,
-        )
+        # 金額・数字を強調色で描画
+        _draw_highlighted_title(draw2, W // 2, y_pos, line, font_t, outline_w=4)
         y_pos += sizes[i][1] + 8
     bg.paste(bg_rgba.convert("RGB"))
 

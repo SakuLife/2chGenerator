@@ -258,6 +258,61 @@ def _get_character_variation(title: str) -> dict:
     return {"appearance": appearance, "expression": expression, "pose": pose}
 
 
+def _smart_title_wrap(title: str, max_chars: int = 14) -> str:
+    """
+    タイトルを適切な位置で改行（単語の途中で切らない）
+
+    Args:
+        title: タイトル文字列
+        max_chars: 1行の最大文字数
+
+    Returns:
+        改行を含むタイトル
+    """
+    if len(title) <= max_chars:
+        return title
+
+    # 改行しやすい位置（助詞の後、句読点の後）
+    good_breaks = ["、", "。", "！", "？", "で", "が", "を", "に", "は", "の", "と", "も", "へ", "から", "まで", "より"]
+    # 改行してはいけない位置（単語の途中）- 後ろにこれらが来たら切らない
+    no_break_before = ["門", "家", "者", "員", "人", "生", "長", "部", "課", "係", "手", "方", "様", "氏", "君", "達"]
+
+    lines = []
+    remaining = title
+
+    while remaining:
+        if len(remaining) <= max_chars + 2:
+            lines.append(remaining)
+            break
+
+        # 最適な切り位置を探す
+        best_pos = max_chars
+        found_good = False
+
+        # 良い切り位置を探す（後ろから前へ）
+        for i in range(min(max_chars + 2, len(remaining) - 1), max(max_chars - 5, 0), -1):
+            char = remaining[i]
+            next_char = remaining[i + 1] if i + 1 < len(remaining) else ""
+
+            # 次の文字が単語の一部なら切らない
+            if next_char in no_break_before:
+                continue
+
+            # 助詞や句読点の後は良い切り位置
+            for sep in good_breaks:
+                if remaining[max(0, i-len(sep)+1):i+1].endswith(sep):
+                    best_pos = i + 1
+                    found_good = True
+                    break
+            if found_good:
+                break
+
+        lines.append(remaining[:best_pos])
+        remaining = remaining[best_pos:]
+
+    return "\n".join(lines)
+
+
 def _build_thumbnail_prompt(
     title: str,
     hook: str | None,
@@ -284,12 +339,17 @@ def _build_thumbnail_prompt(
     # テーマに応じたキャラクターバリエーション
     char = _get_character_variation(title)
 
+    # タイトルを適切な位置で改行（単語の途中で切らない）
+    wrapped_title = _smart_title_wrap(title, max_chars=14)
+
     return f"""日本語の2chまとめ動画のYouTubeサムネイル画像を作成してください。
 
 ★重要: すべてのテキストは日本語で正確に描画してください。英語禁止。★
+★重要: タイトルは以下の改行位置を守ること。単語の途中で改行しないこと。★
 
 レイアウト:
-- 画面上部20%: 非常に大きな太い黒文字（白縁取り付き）で「{title}」
+- 画面上部20%: 非常に大きな太い黒文字（白縁取り付き）で以下のタイトルを表示（改行位置を守ること）:
+「{wrapped_title}」
 
 - 画面中央55%:
   1. 「いらすとや」スタイルのキャラクターを中央に配置

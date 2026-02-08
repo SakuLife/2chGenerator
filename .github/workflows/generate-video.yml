@@ -50,25 +50,33 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
-        shell: bash
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Start VOICEVOX (Docker)
+        shell: pwsh
         run: |
           docker compose up -d voicevox
-          echo "Waiting for VOICEVOX API..."
-          for i in {1..30}; do
-            sleep 2
-            curl -s http://localhost:50021/version > /dev/null 2>&1 && echo "VOICEVOX ready!" && exit 0
-            echo "Attempt $i/30..."
-          done
-          echo "VOICEVOX timeout" && exit 1
-        shell: bash
+          Write-Host "Waiting for VOICEVOX API..."
+          for ($i = 1; $i -le 30; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:50021/version" -UseBasicParsing -ErrorAction Stop
+              Write-Host "VOICEVOX ready!"
+              exit 0
+            } catch {
+              Write-Host "Attempt $i/30..."
+            }
+          }
+          Write-Host "VOICEVOX timeout"
+          exit 1
 
       - name: Create .env from secrets
-        shell: bash
+        shell: pwsh
         run: |
-          cat > .env << EOF
+          @"
           KIEAI_API_KEY=${{ secrets.KIEAI_API_KEY }}
           KIEAI_API_BASE=https://api.kie.ai
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
@@ -76,40 +84,40 @@ jobs:
           GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}
           GOOGLE_DRIVE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           GOOGLE_CLIENT_SECRETS_FILE=client_secrets.json
-          EOF
-          sed -i 's/^[[:space:]]*//' .env
+          "@ | Set-Content -Path .env -Encoding UTF8
 
       - name: Write client_secrets.json
         continue-on-error: true
-        shell: bash
+        shell: pwsh
         run: |
-          if [ -n "${{ secrets.GOOGLE_CLIENT_SECRETS_JSON_B64 }}" ]; then
-            printf '%s' "${{ secrets.GOOGLE_CLIENT_SECRETS_JSON_B64 }}" | tr -d '\n\r' | base64 -d > client_secrets.json
-          fi
+          $secret = "${{ secrets.GOOGLE_CLIENT_SECRETS_JSON_B64 }}"
+          if ($secret) {
+            [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($secret)) | Set-Content -Path client_secrets.json -Encoding UTF8
+          }
 
       - name: Write Google OAuth token (Drive/Sheets用)
         continue-on-error: true
-        shell: bash
+        shell: pwsh
         run: |
-          if [ -n "$TOKEN_B64" ]; then
-            printf '%s' "$TOKEN_B64" | tr -d '\n\r' | base64 -d > google_token.json
-            cp google_token.json drive_token.json
-            cp google_token.json sheets_token.json
-            echo "Google OAuth token files created"
-          else
-            echo "GOOGLE_TOKEN_JSON_B64 not set, skipping Drive/Sheets"
-          fi
-        env:
-          TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_JSON_B64 }}
+          $token = "${{ secrets.GOOGLE_TOKEN_JSON_B64 }}"
+          if ($token) {
+            $decoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($token))
+            $decoded | Set-Content -Path google_token.json -Encoding UTF8
+            Copy-Item google_token.json drive_token.json
+            Copy-Item google_token.json sheets_token.json
+            Write-Host "Google OAuth token files created"
+          } else {
+            Write-Host "GOOGLE_TOKEN_JSON_B64 not set, skipping Drive/Sheets"
+          }
 
       # テーマ自動選定（cronまたはtheme未指定時）
       - name: Auto-suggest theme
         if: inputs.theme == '' || github.event_name == 'schedule'
         id: theme
-        shell: bash
+        shell: pwsh
         run: |
-          THEME=$(python -W ignore -c "
-          import sys, os, logging
+          $theme = python -W ignore -c @"
+          import sys, logging
           logging.disable(logging.WARNING)
           sys.path.insert(0, 'src')
           from theme_suggester import ThemeSuggester
@@ -117,58 +125,61 @@ jobs:
           s = ThemeSuggester(youtube_api_key=YOUTUBE_API_KEY, spreadsheet_id=GOOGLE_SHEETS_ID)
           themes = s.suggest_themes(count=1)
           print(themes[0] if themes else '今日あった面白い話')
-          " 2>/dev/null) || THEME="今日あった面白い話"
-          echo "THEME=$THEME" >> $GITHUB_OUTPUT
-          echo "Selected theme: $THEME"
+          "@ 2>$null
+          if (-not $theme) { $theme = "今日あった面白い話" }
+          "THEME=$theme" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Selected theme: $theme"
 
       - name: Determine publish hour
         id: publish
-        shell: bash
+        shell: pwsh
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            HOUR_UTC=$(date -u +%H)
-            if [ "$HOUR_UTC" = "19" ]; then
-              echo "HOUR=6" >> $GITHUB_OUTPUT
-            else
-              echo "HOUR=18" >> $GITHUB_OUTPUT
-            fi
-          elif [ "${{ inputs.publish_hour }}" != "auto" ] && [ -n "${{ inputs.publish_hour }}" ]; then
-            echo "HOUR=${{ inputs.publish_hour }}" >> $GITHUB_OUTPUT
-          else
-            echo "HOUR=auto" >> $GITHUB_OUTPUT
-          fi
+          if ("${{ github.event_name }}" -eq "schedule") {
+            $hourUtc = (Get-Date).ToUniversalTime().Hour
+            if ($hourUtc -eq 19) {
+              "HOUR=6" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            } else {
+              "HOUR=18" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            }
+          } elseif ("${{ inputs.publish_hour }}" -ne "auto" -and "${{ inputs.publish_hour }}") {
+            "HOUR=${{ inputs.publish_hour }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "HOUR=auto" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
 
       - name: Generate video
-        shell: bash
+        shell: pwsh
         run: |
-          # テーマ決定（手動指定 or 自動提案）
-          if [ -n "${{ inputs.theme }}" ]; then
-            THEME="${{ inputs.theme }}"
-          else
-            THEME="${{ steps.theme.outputs.THEME }}"
-          fi
+          # テーマ決定
+          if ("${{ inputs.theme }}") {
+            $theme = "${{ inputs.theme }}"
+          } else {
+            $theme = "${{ steps.theme.outputs.THEME }}"
+          }
 
-          ARGS="--theme \"$THEME\" --auto"
+          $args = @("--theme", "`"$theme`"", "--auto")
 
-          if [ "${{ inputs.no_images || 'true' }}" = "true" ]; then
-            ARGS="$ARGS --no-images"
-          fi
+          if ("${{ inputs.no_images }}" -eq "true" -or "${{ inputs.no_images }}" -eq "") {
+            $args += "--no-images"
+          }
 
-          # YouTube アップロード（cron時は常にON）
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.upload }}" = "true" ]; then
-            ARGS="$ARGS --upload"
-            # 投稿時刻を明示的に指定
-            if [ "${{ steps.publish.outputs.HOUR }}" != "auto" ]; then
-              ARGS="$ARGS --publish-hour ${{ steps.publish.outputs.HOUR }}"
-            fi
-          fi
+          # YouTube アップロード
+          if ("${{ github.event_name }}" -eq "schedule" -or "${{ inputs.upload }}" -eq "true") {
+            $args += "--upload"
+            if ("${{ steps.publish.outputs.HOUR }}" -ne "auto") {
+              $args += "--publish-hour"
+              $args += "${{ steps.publish.outputs.HOUR }}"
+            }
+          }
 
-          # スプレッドシート記録（cron時は常にON）
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.record }}" = "true" ]; then
-            ARGS="$ARGS --record"
-          fi
+          # スプレッドシート記録
+          if ("${{ github.event_name }}" -eq "schedule" -or "${{ inputs.record }}" -eq "true") {
+            $args += "--record"
+          }
 
-          eval python main.py $ARGS
+          $argString = $args -join " "
+          Write-Host "Running: python main.py $argString"
+          Invoke-Expression "python main.py $argString"
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
@@ -192,10 +203,11 @@ jobs:
 
       - name: Stop VOICEVOX
         if: always()
-        shell: bash
+        shell: pwsh
         run: docker compose down
 
       - name: Cleanup secrets
         if: always()
-        shell: bash
-        run: rm -f .env service_account.json client_secrets.json google_token.json drive_token.json sheets_token.json
+        shell: pwsh
+        run: |
+          Remove-Item -Force -ErrorAction SilentlyContinue .env, service_account.json, client_secrets.json, google_token.json, drive_token.json, sheets_token.json

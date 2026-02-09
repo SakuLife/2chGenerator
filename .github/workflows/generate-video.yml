@@ -56,7 +56,7 @@ jobs:
 
       - name: Start VOICEVOX (Docker)
         run: |
-          docker compose up -d voicevox
+          docker-compose up -d voicevox
           echo "Waiting for VOICEVOX API..."
           for i in $(seq 1 30); do
             sleep 2
@@ -190,7 +190,7 @@ jobs:
 
       - name: Stop VOICEVOX
         if: always()
-        run: docker compose down
+        run: docker-compose down
 
       - name: Cleanup secrets
         if: always()

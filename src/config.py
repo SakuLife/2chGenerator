@@ -31,7 +31,7 @@ YOUTUBE_DEFAULT_TAGS = [
     "2chお金スレ", "2chお金", "お金スレ", "面白いスレ",
     "2ch面白いスレ", "ゆっくり", "2ちゃんねる", "ゆっくり解説",
 ]
-YOUTUBE_CHANNEL_URL = "www.youtube.com/@2ch_money_pro"
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@2ch_money_pro"
 
 # プロジェクトのルートディレクトリ
 ROOT_DIR = Path(__file__).parent.parent

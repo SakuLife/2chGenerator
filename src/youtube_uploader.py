@@ -91,23 +91,32 @@ def _fetch_related_videos() -> list[dict]:
     毎回異なる組み合わせになるよう重複回避
     """
     if not GOOGLE_SHEETS_ID:
+        logger.info("関連動画: GOOGLE_SHEETS_ID未設定、スキップ")
         return []
 
     try:
-        from Skills.google import SheetsClient
+        from Skills.google import SheetsClient, GoogleAuth
         import random
 
+        sheets = None
         if GOOGLE_SERVICE_ACCOUNT:
             sheets = SheetsClient(
                 GOOGLE_SHEETS_ID,
                 service_account_file=GOOGLE_SERVICE_ACCOUNT,
             )
+            logger.info("関連動画: サービスアカウントで認証")
+        elif GOOGLE_CLIENT_SECRETS_FILE:
+            auth = GoogleAuth(GOOGLE_CLIENT_SECRETS_FILE, ROOT_DIR)
+            sheets = SheetsClient(GOOGLE_SHEETS_ID, auth=auth)
+            logger.info("関連動画: OAuthトークンで認証")
         else:
+            logger.warning("関連動画: 認証情報なし、スキップ")
             return []
 
         # B列(テーマ) 〜 F列(YouTube URL) を取得
         values = sheets.get_values("生成ログ!B:F")
         if not values or len(values) <= 1:
+            logger.info("関連動画: スプレッドシートにデータなし")
             return []
 
         # YouTube URLがある動画だけ収集
@@ -120,11 +129,14 @@ def _fetch_related_videos() -> list[dict]:
                 })
 
         if not all_videos:
+            logger.info("関連動画: YouTube URLのある動画なし")
             return []
 
         # 必ず1本以上、最大3本をランダムに選択（重複なし）
         pick_count = min(max(1, random.randint(1, 3)), len(all_videos))
-        return random.sample(all_videos, pick_count)
+        selected = random.sample(all_videos, pick_count)
+        logger.info(f"関連動画: {len(all_videos)}本中{pick_count}本を選択")
+        return selected
 
     except Exception as e:
         logger.warning(f"関連動画取得エラー: {e}")
@@ -151,11 +163,18 @@ def generate_video_description(theme: str) -> str:
     # スプレッドシートから過去動画リンクを取得
     related = _fetch_related_videos()
     if related:
-        lines.append("▼おすすめの関連動画はこちら")
+        lines.append("【おすすめ動画】")
         for video in related:
             title = generate_video_title(video["theme"])
-            lines.append(f"{title}")
-            lines.append(f"{video['url']}")
+            url = video["url"]
+            # URLを正規化（https:// 必須、youtube.com形式に統一）
+            if not url.startswith("http"):
+                url = f"https://{url}"
+            if "youtu.be/" in url:
+                # 短縮URL → フルURL変換
+                video_id = url.split("youtu.be/")[-1].split("?")[0]
+                url = f"https://www.youtube.com/watch?v={video_id}"
+            lines.append(f"▶ {title}\n{url}")
         lines.append("")
 
     lines.extend([

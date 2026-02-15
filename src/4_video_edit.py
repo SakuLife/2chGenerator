@@ -368,37 +368,65 @@ def intro_theme_text_wrap(text: str, target_chars: int = 12) -> list:
     if len(text) <= target_chars + 3:
         return [text]
 
+    # 改行禁止パターン（動詞活用の途中で切らない）
+    no_break_before = [
+        "ら", "たら", "ては", "ても", "てた", "てき", "った", "って", "ってき",
+        "きた", "きて", "ない", "なく", "なか", "れた", "れて", "せた", "せて",
+    ]
+
+    def is_bad_break(pos: int) -> bool:
+        """この位置で改行すると読みにくいか"""
+        if pos >= len(text) or pos == 0:
+            return False
+        prev_char = text[pos - 1]
+        curr_char = text[pos]
+        # 数字の途中で切らない
+        if prev_char.isdigit() and curr_char.isdigit():
+            return True
+        # 数字+単位を分離しない
+        if prev_char.isdigit() and curr_char in '万億千百円%':
+            return True
+        rest = text[pos:pos + 4]
+        for nb in no_break_before:
+            if rest.startswith(nb):
+                return True
+        return False
+
     # 改行候補位置を収集
     candidates = []
     i = 0
     while i < len(text):
-        # 2文字の区切り表現
+        # 2文字の区切り表現（ただし次が禁止パターンなら除外）
         if i + 1 < len(text):
             two = text[i:i + 2]
-            if two in ('から', 'まで', 'けど', 'ので', 'のに', 'って', 'した', 'する', 'った'):
-                candidates.append(i + 2)
+            if two in ('から', 'まで', 'けど', 'ので', 'のに'):
+                if not is_bad_break(i + 2):
+                    candidates.append(i + 2)
                 i += 2
                 continue
 
         ch = text[i]
 
-        # 1文字の助詞（前後に文字がある場合のみ）
-        if ch in 'がはをにでともへ' and i >= 2 and i < len(text) - 1:
+        # 記号の後（これは常にOK）
+        if ch in '、。！？」）…':
             candidates.append(i + 1)
+            i += 1
+            continue
 
-        # 記号の後
-        if ch in '、。！？」）…ｗw':
-            candidates.append(i + 1)
+        # 1文字の助詞（前後に文字がある場合のみ、禁止パターンチェック）
+        if ch in 'がはをにでともへ' and i >= 2 and i < len(text) - 1:
+            if not is_bad_break(i + 1):
+                candidates.append(i + 1)
 
         i += 1
 
     if not candidates:
         return smart_text_wrap(text, target_chars)
 
-    # が/は の後は強い区切り（clause boundary）
+    # が/は/、/。 の後は強い区切り（clause boundary）
     clause_breaks = set()
     for c in candidates:
-        if c > 0 and text[c - 1] in 'がは':
+        if c > 0 and text[c - 1] in 'がは、。':
             clause_breaks.add(c)
 
     # 改行位置を貪欲法で選択
@@ -423,7 +451,7 @@ def intro_theme_text_wrap(text: str, target_chars: int = 12) -> list:
             if line_len > target_chars * 1.4:
                 break
             dist = abs(line_len - target_chars)
-            # 強い区切り（が/は）にはボーナス
+            # 強い区切り（が/は/、/。）にはボーナス
             if c in clause_breaks:
                 dist = max(0, dist - 3)
             if dist < best_dist:
@@ -899,16 +927,22 @@ def load_intro_images(video_size: tuple) -> list:
     # 全ての画像ファイルを収集してランダムに選択
     import random
     all_paths = []
+    seen_names = set()  # ファイル名で重複チェック
+
     for search_dir in search_dirs:
         if not search_dir.exists():
             continue
         for ext in ["*.png", "*.jpg", "*.jpeg", "*.webp"]:
             # intro_* と nb_* の両方を検索
-            all_paths.extend(search_dir.glob(f"intro_*{ext[1:]}"))
-            all_paths.extend(search_dir.glob(f"nb_*{ext[1:]}"))
+            for path in search_dir.glob(f"intro_*{ext[1:]}"):
+                if path.stem not in seen_names:
+                    all_paths.append(path)
+                    seen_names.add(path.stem)
+            for path in search_dir.glob(f"nb_*{ext[1:]}"):
+                if path.stem not in seen_names:
+                    all_paths.append(path)
+                    seen_names.add(path.stem)
 
-    # 重複除去してシャッフル
-    all_paths = list(set(all_paths))
     random.shuffle(all_paths)
 
     for path in all_paths:
@@ -1485,6 +1519,32 @@ def create_video_with_stacked_subtitles(
     if mid_story_narrators:
         logger.info(f"中間ナレーター数: {len(mid_story_narrators)}")
 
+    # 吹き出し画像を事前生成（フレームごとの再生成を防止）
+    speech_bubble_cache = {}
+    if icon_img:
+        for sub in special_subtitles:
+            if sub.get("role") != "title_card":
+                text = sub.get("text", "")
+                if text:
+                    speech_bubble_cache[sub["index"]] = create_icon_speech_bubble(text, icon_img, video_size)
+        for sub in mid_story_narrators:
+            text = sub.get("text", "")
+            if text and sub["index"] not in speech_bubble_cache:
+                speech_bubble_cache[sub["index"]] = create_icon_speech_bubble(text, icon_img, video_size)
+        if ending_narrator:
+            text = ending_narrator.get("text", "")
+            if text and ending_narrator["index"] not in speech_bubble_cache:
+                speech_bubble_cache[ending_narrator["index"]] = create_icon_speech_bubble(text, icon_img, video_size)
+    logger.info(f"吹き出し画像キャッシュ: {len(speech_bubble_cache)}個")
+
+    # エンディング用アイコンを事前リサイズ
+    large_ending_icon = None
+    if selected_ending_icon:
+        target_h = int(video_size[1] * 0.75)
+        aspect = selected_ending_icon.width / selected_ending_icon.height
+        target_w = int(target_h * aspect)
+        large_ending_icon = selected_ending_icon.resize((target_w, target_h), Image.LANCZOS)
+
     # 背景動画を読み込み（総時間・シーン切り替えポイントが決まってから）
     if use_video_background:
         # シーン切り替えポイント: 冒頭→本編開始、中間ナレーターの位置
@@ -1504,15 +1564,28 @@ def create_video_with_stacked_subtitles(
         for scene in bg_video_clips:
             if scene["start"] <= t < scene["end"]:
                 local_t = t - scene["start"]
-                video_frame = scene["clip"].get_frame(local_t)
-                return Image.fromarray(video_frame).convert("RGBA")
+                # フレーム取得範囲をクランプ（範囲外アクセス防止）
+                local_t = max(0, min(local_t, scene["clip"].duration - 0.04))
+                try:
+                    video_frame = scene["clip"].get_frame(local_t)
+                    return Image.fromarray(video_frame).convert("RGBA")
+                except Exception:
+                    return None
         # 見つからない場合は最後のシーン
         last_scene = bg_video_clips[-1]
-        local_t = min(t - last_scene["start"], last_scene["clip"].duration - 0.01)
-        video_frame = last_scene["clip"].get_frame(max(0, local_t))
-        return Image.fromarray(video_frame).convert("RGBA")
+        local_t = min(t - last_scene["start"], last_scene["clip"].duration - 0.04)
+        local_t = max(0, local_t)
+        try:
+            video_frame = last_scene["clip"].get_frame(local_t)
+            return Image.fromarray(video_frame).convert("RGBA")
+        except Exception:
+            return None
+
+    # エラー時用のフォールバックフレーム（事前生成）
+    _fallback_frame = np.zeros((video_size[1], video_size[0], 3), dtype=np.uint8) + 40
 
     def make_frame(t):
+      try:
         # ベース画像（背景）
         if use_video_background and bg_video_clips:
             # 動画フレームを取得（シーンに応じた背景）
@@ -1523,7 +1596,7 @@ def create_video_with_stacked_subtitles(
             else:
                 frame = background_img.copy() if background_img else Image.new("RGBA", video_size, (40, 45, 55, 255))
         else:
-            frame = background_img.copy()
+            frame = background_img.copy() if background_img else Image.new("RGBA", video_size, (40, 45, 55, 255))
 
         # ====== エンディングセクション（最後のナレーター）======
         if ending_narrator:
@@ -1532,27 +1605,18 @@ def create_video_with_stacked_subtitles(
 
             if ending_start <= t < ending_end:
                 # 大きなアイコンを中央に揺らしながら表示
-                if selected_ending_icon:
-                    # 大きくリサイズ（画面高さの75%）
-                    target_h = int(video_size[1] * 0.75)
-                    aspect = selected_ending_icon.width / selected_ending_icon.height
-                    target_w = int(target_h * aspect)
-                    large_icon = selected_ending_icon.resize((target_w, target_h), Image.LANCZOS)
-
-                    # ふわふわエフェクト（キャラクターと同じ控えめな上下動）
-                    # 周期3秒、振幅8pxの緩やかなsin波
+                if large_ending_icon:
+                    # ふわふわエフェクト（周期3秒、振幅8px）
                     bob_offset = int(math.sin(t * 2 * math.pi / 3) * 8)
 
-                    icon_x = (video_size[0] - target_w) // 2
+                    icon_x = (video_size[0] - large_ending_icon.width) // 2
                     icon_y = int(video_size[1] * 0.15) + bob_offset
 
-                    frame.paste(large_icon, (icon_x, icon_y), large_icon)
+                    frame.paste(large_ending_icon, (icon_x, icon_y), large_ending_icon)
 
-                # アイコン付き吹き出し字幕を下部に表示
-                if icon_img:
-                    speech = create_icon_speech_bubble(
-                        ending_narrator.get("text", ""), icon_img, video_size
-                    )
+                # アイコン付き吹き出し字幕を下部に表示（キャッシュ済み）
+                speech = speech_bubble_cache.get(ending_narrator["index"])
+                if speech:
                     speech_x = ICON_LEFT_MARGIN
                     speech_y = video_size[1] - speech.height - ICON_BOTTOM_MARGIN
                     frame.paste(speech, (speech_x, speech_y), speech)
@@ -1569,14 +1633,13 @@ def create_video_with_stacked_subtitles(
             for img, pos in intro_images:
                 frame.paste(img, pos, img)
 
-            # 冒頭ナレーション字幕をアイコン付き吹き出しで下部に表示
+            # 冒頭ナレーション字幕をアイコン付き吹き出しで下部に表示（キャッシュ済み）
             for sub in special_subtitles:
                 start = sub["start_time"]
                 end = start + sub["duration"]
                 if start <= t < end and sub.get("role") != "title_card":
-                    text = sub.get("text", "")
-                    if text and icon_img:
-                        speech = create_icon_speech_bubble(text, icon_img, video_size)
+                    speech = speech_bubble_cache.get(sub["index"])
+                    if speech:
                         speech_x = ICON_LEFT_MARGIN
                         speech_y = video_size[1] - speech.height - ICON_BOTTOM_MARGIN
                         frame.paste(speech, (speech_x, speech_y), speech)
@@ -1596,11 +1659,9 @@ def create_video_with_stacked_subtitles(
                 # テーマを右上に小さく表示
                 if theme_img and theme_position:
                     frame.paste(theme_img, theme_position, theme_img)
-                # アイコン付き吹き出しを下部に表示（冒頭と同じ形式）
-                if icon_img:
-                    speech = create_icon_speech_bubble(
-                        sub.get("text", ""), icon_img, video_size
-                    )
+                # アイコン付き吹き出しを下部に表示（キャッシュ済み）
+                speech = speech_bubble_cache.get(sub["index"])
+                if speech:
                     speech_x = ICON_LEFT_MARGIN
                     speech_y = video_size[1] - speech.height - ICON_BOTTOM_MARGIN
                     frame.paste(speech, (speech_x, speech_y), speech)
@@ -1647,6 +1708,9 @@ def create_video_with_stacked_subtitles(
                     current_y += sub["height"] + SUBTITLE_STACK_MARGIN
 
         return np.array(frame.convert("RGB"))
+      except Exception as e:
+        logger.error(f"フレーム生成エラー (t={t:.2f}s): {e}")
+        return _fallback_frame.copy()
 
     # 音声クリップを作成
     audio_clips = []

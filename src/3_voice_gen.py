@@ -21,11 +21,19 @@ sys.path.insert(1, str(Path(__file__).parent.parent.parent))
 from Skills.voicevox import VoicevoxClient, VoicevoxLauncher
 
 from config import (
+    GEMINI_API_KEY,
     SCRIPTS_DIR,
     VOICES_DIR,
     ensure_directories,
 )
 from logger import logger
+
+# Gemini API（読み方チェック用）
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
 
 # キャラクター別スピーカーID（VOICEVOX）
@@ -110,6 +118,38 @@ READING_DICT = {
     "何年": "なんねん",
     "何万": "なんまん",
     "何円": "なんえん",
+    # 英語・ブランド名
+    "UberEats": "ウーバーイーツ",
+    "Uber Eats": "ウーバーイーツ",
+    "Uber": "ウーバー",
+    "PayPay": "ペイペイ",
+    "Spotify": "スポティファイ",
+    "TikTok": "ティックトック",
+    "Instagram": "インスタグラム",
+    "iPhone": "アイフォン",
+    "Apple": "アップル",
+    "ChatGPT": "チャットジーピーティー",
+    "Wi-Fi": "ワイファイ",
+    "WiFi": "ワイファイ",
+    "Bitcoin": "ビットコイン",
+    "Suica": "スイカ",
+    "PASMO": "パスモ",
+    "PayPal": "ペイパル",
+    "Tesla": "テスラ",
+    "Costco": "コストコ",
+    "IKEA": "イケア",
+    "Starbucks": "スターバックス",
+    "McDonald's": "マクドナルド",
+    "McDonalds": "マクドナルド",
+    "AirPods": "エアーポッズ",
+    "Switch": "スイッチ",
+    "PS5": "ピーエスファイブ",
+    "Zoom": "ズーム",
+    "Slack": "スラック",
+    "UNIQLO": "ユニクロ",
+    "GU": "ジーユー",
+    "ZARA": "ザラ",
+    "楽天": "らくてん",
     # 英語・略語
     "SIM": "しむ",
     "S&P500": "えすあんどぴーごひゃく",
@@ -263,6 +303,33 @@ READING_DICT = {
     "鶏肉": "とりにく",
     "牛肉": "ぎゅうにく",
     "豚肉": "ぶたにく",
+    # よく誤読される単語
+    "借金": "しゃっきん",
+    "貯金": "ちょきん",
+    "貸金": "かしきん",
+    "元金": "がんきん",
+    "現金": "げんきん",
+    "預金": "よきん",
+    "定期預金": "ていきよきん",
+    "出資": "しゅっし",
+    "融資": "ゆうし",
+    "返済": "へんさい",
+    "完済": "かんさい",
+    "滞納": "たいのう",
+    "延滞": "えんたい",
+    "破産": "はさん",
+    "自己破産": "じこはさん",
+    "債務": "さいむ",
+    "債権": "さいけん",
+    "負債": "ふさい",
+    "担保": "たんぽ",
+    "抵当": "ていとう",
+    "利息": "りそく",
+    "利子": "りし",
+    "金利": "きんり",
+    "年利": "ねんり",
+    "複利": "ふくり",
+    "単利": "たんり",
 }
 
 # 助詞「は」→「わ」に変換するパターン（名詞＋は）
@@ -328,6 +395,82 @@ def convert_particle_ha(text: str) -> str:
     return text
 
 
+def normalize_fullwidth_numbers(text: str) -> str:
+    """全角数字を半角に変換（読み方変換の前処理）"""
+    fullwidth = "０１２３４５６７８９"
+    halfwidth = "0123456789"
+    trans_table = str.maketrans(fullwidth, halfwidth)
+    return text.translate(trans_table)
+
+
+def convert_large_numbers(text: str) -> str:
+    """
+    大きな数字（万、億、兆単位）を読み仮名に変換
+
+    例: 5000万 → ごせんまん, 3億 → さんおく
+    """
+    import re
+
+    # 数字の読み方マッピング
+    digit_readings = {
+        "0": "", "1": "いっ", "2": "に", "3": "さん", "4": "よん",
+        "5": "ご", "6": "ろく", "7": "なな", "8": "はっ", "9": "きゅう",
+    }
+    # 千の位の特殊読み
+    digit_sen = {
+        "0": "", "1": "せん", "2": "にせん", "3": "さんぜん", "4": "よんせん",
+        "5": "ごせん", "6": "ろくせん", "7": "ななせん", "8": "はっせん", "9": "きゅうせん",
+    }
+    # 百の位の特殊読み
+    digit_hyaku = {
+        "0": "", "1": "ひゃく", "2": "にひゃく", "3": "さんびゃく", "4": "よんひゃく",
+        "5": "ごひゃく", "6": "ろっぴゃく", "7": "ななひゃく", "8": "はっぴゃく", "9": "きゅうひゃく",
+    }
+    # 十の位
+    digit_juu = {
+        "0": "", "1": "じゅう", "2": "にじゅう", "3": "さんじゅう", "4": "よんじゅう",
+        "5": "ごじゅう", "6": "ろくじゅう", "7": "ななじゅう", "8": "はちじゅう", "9": "きゅうじゅう",
+    }
+    # 一の位（単位の前）
+    digit_ichi = {
+        "0": "", "1": "いち", "2": "に", "3": "さん", "4": "よん",
+        "5": "ご", "6": "ろく", "7": "なな", "8": "はち", "9": "きゅう",
+    }
+
+    def number_to_reading(num_str: str, unit: str) -> str:
+        """4桁以下の数字を読みに変換"""
+        num_str = num_str.lstrip("0")
+        if not num_str:
+            return ""
+
+        num_str = num_str.zfill(4)  # 4桁に揃える
+        sen, hyaku, juu, ichi = num_str
+
+        reading = ""
+        reading += digit_sen.get(sen, "")
+        reading += digit_hyaku.get(hyaku, "")
+        reading += digit_juu.get(juu, "")
+        # 一の位は単位がある場合のみ読む
+        if ichi != "0":
+            reading += digit_ichi.get(ichi, "")
+
+        return reading + unit if reading else ""
+
+    # 億、万の順で処理（大きい単位から）
+    # パターン: 数字+億, 数字+万
+    def replace_unit(match):
+        num = match.group(1)
+        unit = match.group(2)
+        unit_reading = {"億": "おく", "万": "まん", "兆": "ちょう"}.get(unit, unit)
+        reading = number_to_reading(num, unit_reading)
+        return reading if reading else match.group(0)
+
+    # 億・万・兆を含む数字を変換
+    text = re.sub(r"(\d{1,4})(億|万|兆)", replace_unit, text)
+
+    return text
+
+
 def get_audio_duration(audio_path: Path) -> float:
     """
     pydubで音声ファイルの実際の長さを計測
@@ -381,12 +524,13 @@ def adjust_audio_speed(audio_path: Path, speed: float) -> None:
     audio_fast.export(str(audio_path), format="wav")
 
 
-def generate_voices_from_script(script_path: Path) -> dict:
+def generate_voices_from_script(script_path: Path, use_ai_fix: bool = True) -> dict:
     """
     台本から音声を一括生成し、タイミング情報をsubtitles.jsonに出力
 
     Args:
         script_path: 台本JSONファイルのパス
+        use_ai_fix: AIで読み方を自動修正するか
 
     Returns:
         {index: voice_path} の辞書
@@ -406,6 +550,43 @@ def generate_voices_from_script(script_path: Path) -> dict:
 
     logger.info(f"台本を読み込みました: {script_path.name}")
     logger.info(f"シーン数: {len(script)}個")
+
+    # AI修正用: 事前に全テキストを変換してAI修正
+    ai_fixed_texts = {}
+    if use_ai_fix and GEMINI_AVAILABLE and GEMINI_API_KEY:
+        logger.info("🤖 AI読み方チェック中...")
+        texts_to_fix = []
+        indices_to_fix = []
+
+        for i, scene in enumerate(script):
+            role = scene.get("role", "narrator")
+            text = scene.get("text", "")
+            voice_path = VOICES_DIR / f"{i:03d}_{role}.wav"
+
+            # 新規生成が必要なものだけ
+            if text and role != "title_card" and not voice_path.exists():
+                # 基本変換を適用
+                voice_text = text
+                voice_text = normalize_fullwidth_numbers(voice_text)
+                voice_text = convert_large_numbers(voice_text)
+                voice_text = apply_reading_dict(voice_text)
+                voice_text = convert_particle_ha(voice_text)
+                voice_text = voice_text.strip()
+
+                if voice_text:
+                    texts_to_fix.append(voice_text)
+                    indices_to_fix.append(i)
+
+        if texts_to_fix:
+            logger.info(f"  {len(texts_to_fix)}件のテキストをAIチェック")
+            fixed_texts = batch_fix_readings_with_ai(texts_to_fix)
+            for idx, fixed in zip(indices_to_fix, fixed_texts):
+                ai_fixed_texts[idx] = fixed
+                # 変更があればログ出力
+                original = texts_to_fix[indices_to_fix.index(idx)]
+                if original != fixed:
+                    logger.info(f"  [{idx:03d}] AI修正: {original[:20]}... → {fixed[:20]}...")
+            logger.info("✅ AIチェック完了")
 
     voice_map = {}
     subtitles = []  # 字幕タイミング情報
@@ -454,14 +635,20 @@ def generate_voices_from_script(script_path: Path) -> dict:
             subtitles.append(subtitle_entry)
             continue
 
-        # 音声用テキストを作成（読み方変換）
-        voice_text = text
-        # 辞書に基づいて変換（長い表記から順に処理）
-        for orig, reading in sorted(READING_DICT.items(), key=lambda x: -len(x[0])):
-            voice_text = voice_text.replace(orig, reading)
-        # 助詞「は」→「わ」変換
-        voice_text = convert_particle_ha(voice_text)
-        voice_text = voice_text.strip()
+        # 音声用テキストを作成（AI修正済みがあればそれを使用）
+        if i in ai_fixed_texts:
+            voice_text = ai_fixed_texts[i]
+        else:
+            voice_text = text
+            # 1. 全角数字→半角数字
+            voice_text = normalize_fullwidth_numbers(voice_text)
+            # 2. 大きな数字を読み仮名に変換（5000万→ごせんまん）
+            voice_text = convert_large_numbers(voice_text)
+            # 3. 辞書に基づいて変換
+            voice_text = apply_reading_dict(voice_text)
+            # 4. 助詞「は」→「わ」変換
+            voice_text = convert_particle_ha(voice_text)
+            voice_text = voice_text.strip()
 
         if not voice_text:
             logger.info(f"[{i:03d}] スキップ（音声テキストなし）")
@@ -532,12 +719,274 @@ def generate_voices_from_script(script_path: Path) -> dict:
     return voice_map
 
 
+def _reading_sort_key(item):
+    """READING_DICTのソートキー（長い順、同じ長さなら漢字のみ優先）"""
+    orig = item[0]
+    length = -len(orig)
+    has_kana = any('\u3040' <= c <= '\u30ff' for c in orig)
+    return (length, has_kana)
+
+
+def apply_reading_dict(text: str) -> str:
+    """
+    テキストにREADING_DICTを適用
+
+    Args:
+        text: 変換前のテキスト
+
+    Returns:
+        変換後のテキスト
+    """
+    for orig, reading in sorted(READING_DICT.items(), key=_reading_sort_key):
+        text = text.replace(orig, reading)
+    return text
+
+
+def preview_text_conversion(text: str) -> str:
+    """
+    テキストの読み方変換結果をプレビュー（単一テキスト用）
+
+    Args:
+        text: 変換前のテキスト
+
+    Returns:
+        変換後のテキスト
+    """
+    voice_text = text
+    voice_text = normalize_fullwidth_numbers(voice_text)
+    voice_text = convert_large_numbers(voice_text)
+    voice_text = apply_reading_dict(voice_text)
+    voice_text = convert_particle_ha(voice_text)
+    return voice_text.strip()
+
+
+def preview_script_readings(script_path: Path) -> list[dict]:
+    """
+    台本の全テキストの読み方変換結果をプレビュー
+
+    Args:
+        script_path: 台本JSONファイルのパス
+
+    Returns:
+        変換結果のリスト [{index, original, converted, has_change}]
+    """
+    with open(script_path, "r", encoding="utf-8") as f:
+        script = json.load(f)
+
+    results = []
+    for i, scene in enumerate(script):
+        text = scene.get("text", "")
+        if not text:
+            continue
+
+        converted = preview_text_conversion(text)
+        has_change = text != converted
+
+        results.append({
+            "index": i,
+            "role": scene.get("role", ""),
+            "original": text,
+            "converted": converted,
+            "has_change": has_change,
+        })
+
+    return results
+
+
+def fix_reading_with_ai(text: str) -> str:
+    """
+    AIを使って読み方を自動修正
+
+    Args:
+        text: 変換後のテキスト
+
+    Returns:
+        修正後のテキスト（ひらがな化された箇所を含む）
+    """
+    if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
+        return text
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+
+    prompt = f"""以下のテキストを音声合成ソフト（VOICEVOX）で正しく読めるように修正してください。
+
+修正ルール：
+1. 英語の単語・ブランド名は必ずカタカナに変換（例: UberEats→ウーバーイーツ, Netflix→ネットフリックス, iPhone→アイフォン）
+2. 英語の略語はカタカナで読みを書く（例: NISA→ニーサ, ETF→イーティーエフ）
+3. 誤読されそうな漢字はひらがなに変換（例: 借金→しゃっきん）
+4. 大きな数字は読み仮名に変換（例: 5000万→ごせんまん）
+5. 正しく読める部分はそのまま残す（過剰にひらがな化しない）
+6. 意味・語順を変えない。句読点や記号はそのまま
+
+入力テキスト：
+{text}
+
+修正後のテキストのみを出力してください。説明は不要です。"""
+
+    try:
+        response = model.generate_content(prompt)
+        fixed = response.text.strip()
+        # 余計な引用符やマークダウンを除去
+        fixed = fixed.strip('"\'`')
+        if fixed.startswith("```"):
+            fixed = fixed.split("\n", 1)[-1].rsplit("```", 1)[0]
+        return fixed
+    except Exception as e:
+        logger.warning(f"AI修正失敗、元テキストを使用: {e}")
+        return text
+
+
+def batch_fix_readings_with_ai(texts: list[str]) -> list[str]:
+    """
+    複数テキストをまとめてAI修正（API呼び出し削減）
+
+    Args:
+        texts: 変換後のテキストリスト
+
+    Returns:
+        修正後のテキストリスト
+    """
+    if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
+        return texts
+
+    if not texts:
+        return texts
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+
+    # 番号付きで結合
+    numbered = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+
+    prompt = f"""以下のテキストを音声合成ソフト（VOICEVOX）で正しく読めるように修正してください。
+
+修正ルール：
+1. 英語の単語・ブランド名は必ずカタカナに変換（例: UberEats→ウーバーイーツ, Netflix→ネットフリックス, Amazon→アマゾン, iPhone→アイフォン）
+2. 英語の略語はカタカナで読みを書く（例: NISA→ニーサ, ETF→イーティーエフ, AI→エーアイ, SNS→エスエヌエス）
+3. 誤読されそうな漢字はひらがなに変換（例: 借金→しゃっきん, 何人→なんにん）
+4. 大きな数字は読み仮名に変換（例: 5000万→ごせんまん, 3億→さんおく）
+5. 正しく読める部分はそのまま残す（過剰にひらがな化しない）
+6. 意味・語順を変えない。句読点や記号はそのまま
+7. 各行の番号[N]は維持
+
+入力：
+{numbered}
+
+出力形式：番号付きで修正後テキストのみを出力。説明不要。"""
+
+    try:
+        response = model.generate_content(prompt)
+        result_text = response.text.strip()
+
+        # パース
+        fixed_texts = list(texts)  # コピー
+        for line in result_text.split("\n"):
+            line = line.strip()
+            if line.startswith("[") and "]" in line:
+                try:
+                    idx_str = line[1:line.index("]")]
+                    idx = int(idx_str)
+                    content = line[line.index("]") + 1:].strip()
+                    if 0 <= idx < len(fixed_texts):
+                        fixed_texts[idx] = content
+                except (ValueError, IndexError):
+                    continue
+
+        return fixed_texts
+
+    except Exception as e:
+        logger.warning(f"AI一括修正失敗: {e}")
+        return texts
+
+
+def run_preview_mode(script_path: Path) -> bool:
+    """
+    プレビューモード: 読み方変換を確認して続行するか選択
+
+    Args:
+        script_path: 台本JSONファイルのパス
+
+    Returns:
+        True=続行, False=中止
+    """
+    print("\n" + "=" * 60)
+    print("📖 読み方プレビューモード")
+    print("=" * 60)
+
+    results = preview_script_readings(script_path)
+    changes = [r for r in results if r["has_change"]]
+
+    if not changes:
+        print("\n✅ 変換が必要なテキストはありません")
+        return True
+
+    print(f"\n🔄 {len(changes)}件のテキストが変換されます:\n")
+
+    for r in changes:
+        print(f"[{r['index']:03d}] {r['role']}")
+        print(f"  元: {r['original'][:60]}{'...' if len(r['original']) > 60 else ''}")
+        print(f"  →: {r['converted'][:60]}{'...' if len(r['converted']) > 60 else ''}")
+        print()
+
+    print("=" * 60)
+    while True:
+        choice = input("\n続行しますか？ [y=続行 / n=中止 / d=詳細表示]: ").strip().lower()
+        if choice == "y":
+            return True
+        elif choice == "n":
+            print("中止しました")
+            return False
+        elif choice == "d":
+            print("\n" + "=" * 60)
+            print("📋 全変換詳細")
+            print("=" * 60 + "\n")
+            for r in changes:
+                print(f"[{r['index']:03d}] {r['role']}")
+                print(f"  元: {r['original']}")
+                print(f"  →: {r['converted']}")
+                print("-" * 40)
+        else:
+            print("y, n, d のいずれかを入力してください")
+
+
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="音声生成スクリプト")
+    parser.add_argument("--no-ai-fix", action="store_true", help="AI読み方修正を無効化（デフォルトは有効）")
+    parser.add_argument("--preview", action="store_true", help="プレビューモード（変換結果を確認）")
+    parser.add_argument("--preview-only", action="store_true", help="プレビューのみ（音声生成しない）")
+    parser.add_argument("--test", type=str, help="テスト用: 単一テキストの変換を確認")
+    parser.add_argument("--test-ai", type=str, help="テスト用: AI修正の確認")
+    args = parser.parse_args()
+
     script_path = SCRIPTS_DIR / "script.json"
 
-    if not script_path.exists():
-        print(f"エラー: 台本ファイルが見つかりません: {script_path}")
-        print("先に 1_script_gen.py を実行してください。")
-        exit(1)
+    # テストモード: 単一テキストの変換確認
+    if args.test:
+        print(f"元: {args.test}")
+        print(f"→: {preview_text_conversion(args.test)}")
+        exit(0)
 
-    generate_voices_from_script(script_path)
+    # テストモード: AI修正の確認
+    if args.test_ai:
+        print(f"元: {args.test_ai}")
+        converted = preview_text_conversion(args.test_ai)
+        print(f"辞書変換: {converted}")
+        fixed = fix_reading_with_ai(converted)
+        print(f"AI修正: {fixed}")
+        exit(0)
+
+    # プレビューのみモード
+    if args.preview_only:
+        run_preview_mode(script_path)
+        exit(0)
+
+    # プレビューモード（確認後に生成）
+    if args.preview:
+        if not run_preview_mode(script_path):
+            exit(0)
+
+    # 音声生成（デフォルトでAI修正有効、--no-ai-fix で無効化）
+    generate_voices_from_script(script_path, use_ai_fix=not args.no_ai_fix)

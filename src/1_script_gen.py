@@ -2,20 +2,99 @@
 台本生成スクリプト
 Gemini APIを使用して2ch/5ch風のスレッド台本をJSON形式で生成
 2パス方式：前半（導入〜メイン前半）→後半（メイン後半〜エンディング）で確実に長編を生成
+
+参考データ機能:
+- reference_data/transcripts.jsonl から人気チャンネルの台本を読み込み
+- スタイル・構成の参考としてプロンプトに含める
 """
 
 import json
+import random
 import re
 import time
 from pathlib import Path
 
 import google.generativeai as genai
 
-from config import GEMINI_API_KEY, SCRIPTS_DIR, ensure_directories
+from config import GEMINI_API_KEY, SCRIPTS_DIR, ROOT_DIR, ensure_directories
 from logger import logger
+
+# 参考データディレクトリ
+REFERENCE_DATA_DIR = ROOT_DIR / "reference_data"
 
 # Gemini APIの設定
 genai.configure(api_key=GEMINI_API_KEY)
+
+
+def _load_reference_transcripts(max_samples: int = 2) -> list[str]:
+    """
+    参考チャンネルの字幕データを読み込み、ランダムに数本選んで返す
+
+    Args:
+        max_samples: 最大サンプル数
+
+    Returns:
+        参考台本テキストのリスト
+    """
+    transcripts_path = REFERENCE_DATA_DIR / "transcripts.jsonl"
+    if not transcripts_path.exists():
+        logger.info("参考データなし（reference_data/transcripts.jsonl）")
+        return []
+
+    try:
+        all_transcripts = []
+        with open(transcripts_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    data = json.loads(line)
+                    full_text = data.get("full_text", "")
+                    if full_text and len(full_text) > 500:  # 短すぎるものは除外
+                        all_transcripts.append({
+                            "video_id": data.get("video_id", ""),
+                            "text": full_text[:3000],  # 長すぎる場合は切り詰め
+                        })
+
+        if not all_transcripts:
+            return []
+
+        # ランダムに選択
+        samples = random.sample(all_transcripts, min(max_samples, len(all_transcripts)))
+        logger.info(f"参考データ {len(samples)}本を読み込み")
+
+        return [s["text"] for s in samples]
+
+    except Exception as e:
+        logger.warning(f"参考データ読み込みエラー: {e}")
+        return []
+
+
+def _build_reference_section(reference_texts: list[str]) -> str:
+    """
+    参考台本をプロンプト用のセクションに整形
+
+    Args:
+        reference_texts: 参考台本テキストのリスト
+
+    Returns:
+        プロンプト用の参考セクション文字列
+    """
+    if not reference_texts:
+        return ""
+
+    sections = []
+    for i, text in enumerate(reference_texts, 1):
+        sections.append(f"【参考台本{i}】\n{text}\n")
+
+    return f"""
+# 参考台本（人気チャンネルのスタイルを学習）
+以下は人気2chまとめチャンネルの実際の台本です。
+このスタイル・構成・口調を参考にして、同じような雰囲気の台本を作成してください。
+ただし、内容はそのままコピーせず、与えられたテーマに沿ったオリジナルの台本を作成すること。
+
+{chr(10).join(sections)}
+---
+上記の参考台本のスタイルを真似て、以下のテーマで台本を作成してください。
+"""
 
 # ===== 共通設定 =====
 _COMMON_RULES = """# キャラクター設定（10人のスレ民を満遍なく使うこと）
@@ -37,22 +116,24 @@ _COMMON_RULES = """# キャラクター設定（10人のスレ民を満遍なく
 - 【必須】スレ民同士で会話・議論・情報提供すること（イッチ抜きの連続セリフを必ず入れる）
 - 【必須】スレ民が有益な情報を提供すること（具体的な数字、制度の説明、体験談、豆知識）
 
-## スレ民同士の会話パターン（これらを必ず台本に含めること）
-パターン1: 質問→回答
-  res_H「iDeCoってなんや？聞いたことあるけど」
-  res_D「iDeCoは個人型確定拠出年金のことや。毎月の掛け金が全額所得控除になるから、年収500万なら年間5万くらい節税できるで」
-  res_G「ただし60歳まで引き出せんから、余裕資金でやらんとあかん」
+## スレ民同士の会話パターン（テーマに合わせたオリジナルの会話を作成すること）
+【重要】以下は会話パターンの「型」の説明です。例文の内容をそのままコピーせず、テーマに沿った独自の会話を作成してください。
 
-パターン2: 体験談の共有
-  res_E「ワイも似た経験あるわ。月3万の積立で5年間続けたら元本180万が230万になっとった」
-  res_C「5年で50万増えたんか。年利でいうと5%くらいやな」
-  res_B「ワイもやってみようかな。でも何買えばいいかわからん」
-  res_D「初心者ならS&P500かオルカンが鉄板やで。信託報酬も0.1%以下やし」
+パターン1: 質問→回答→補足（3人のスレ民が会話）
+  - res_Hが初心者として質問
+  - res_Dが専門知識で回答
+  - res_Gが注意点や補足を追加
 
-パターン3: 議論・深掘り
-  res_G「でも新NISAは年間360万が上限やろ？それ以上投資したい場合は？」
-  res_I「その場合は特定口座使うしかないな。税金20%取られるけど」
-  res_C「いや、そもそも年360万も投資できる奴がどんだけおるんやって話」
+パターン2: 体験談の共有→分析→展開（4人のスレ民が会話）
+  - res_Eが自分の体験談を語る
+  - res_Cが数字で分析
+  - res_Bが興味を示す
+  - res_Dがアドバイス
+
+パターン3: 議論・深掘り（3人のスレ民が議論）
+  - res_Gが疑問を投げかける
+  - res_Iが解決策を提示
+  - res_Cが現実的な視点でツッコむ
 
 - スレ民のセリフで「>>〇〇」のようなアンカー記法は使わないこと
 - 5〜6セリフに1回は必ずスレ民同士のやり取り（イッチ抜きで2〜4連続セリフ）を入れること
@@ -89,7 +170,7 @@ PROMPT_PART1 = """# 命令
 あなたは「2ちゃんねる（5ちゃんねる）」の傑作スレッドを作成する放送作家です。
 以下のテーマに基づいて、動画台本の【前半部分】をJSON形式で作成してください。
 JSONのみを出力し、他の説明文は不要です。
-
+{reference_section}
 # テーマ
 {theme}
 
@@ -270,13 +351,14 @@ def _get_token_counts(response) -> tuple[int, int, int]:
         return 0, 0, 0
 
 
-def generate_script(theme: str, output_filename: str = "script.json") -> dict:
+def generate_script(theme: str, output_filename: str = "script.json", use_reference: bool = True) -> dict:
     """
     テーマに基づいて台本を2パスで生成
 
     Args:
         theme: 動画のテーマ
         output_filename: 出力ファイル名
+        use_reference: 参考データを使用するか（デフォルト: True）
 
     Returns:
         dict: {
@@ -296,12 +378,19 @@ def generate_script(theme: str, output_filename: str = "script.json") -> dict:
     total_prompt_tokens = 0
     total_completion_tokens = 0
 
+    # ===== 参考データ読み込み =====
+    reference_section = ""
+    if use_reference:
+        reference_texts = _load_reference_transcripts(max_samples=2)
+        reference_section = _build_reference_section(reference_texts)
+
     # ===== パート1: 前半生成 =====
     logger.info(f"テーマ「{theme}」で台本を生成中... (パート1/2: 前半)")
 
     prompt1 = PROMPT_PART1.format(
         theme=theme,
         common_rules=_COMMON_RULES,
+        reference_section=reference_section,
     )
 
     part1 = None

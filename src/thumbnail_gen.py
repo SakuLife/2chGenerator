@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 from config import (
     KIEAI_API_KEY,
     KIEAI_API_BASE,
+    GEMINI_API_KEY,
     THUMBNAIL_DIR,
     FONTS_DIR,
     SCRIPTS_DIR,
@@ -24,6 +25,13 @@ from config import (
     ensure_directories,
 )
 from logger import logger
+
+# Gemini API（テーマ短縮用）
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
 # サイズ
 W = 1280
@@ -34,10 +42,89 @@ H = 720
 #  テーマ分割・テキスト準備
 # ====================================================================
 
-def _split_theme(theme: str) -> tuple[str, str | None]:
+def _shorten_theme_with_ai(theme: str) -> tuple[str, str]:
+    """
+    AIでテーマをサムネイル用に短縮（参考アカウント風）
+
+    Args:
+        theme: 元のテーマ
+
+    Returns:
+        (タイトル, フック) - それぞれ1行に収まる長さ
+    """
+    if not GEMINI_AVAILABLE or not GEMINI_API_KEY:
+        return None, None
+
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+
+    prompt = f"""YouTube2chまとめ動画のサムネイル用にテーマを短縮。人気チャンネル風の煽りタイトルを作成。
+
+元テーマ: {theme}
+
+【重要ルール】
+- タイトル: 最大14文字。数字を必ず含める。状況説明。
+- フック: 最大14文字。インパクト重視。「！」「？」「www」で終わる煽り文。
+
+【参考例（人気チャンネル風）】
+- 「高配当株をやる時の重要ポイントを挙げてけ」
+  → {{"title": "高配当株をやる時の", "hook": "重要ポイントを挙げてけ！"}}
+
+- 「新NISA満額埋められる人の割合は上位1割だけだと判明」
+  → {{"title": "1800万埋められる", "hook": "たったの上位1割！"}}
+
+- 「30代で借金500万抱えてる俺が専門家に相談した結果」
+  → {{"title": "借金500万を相談", "hook": "衝撃の結果www"}}
+
+- 「年収400万が5年で2000万貯めた方法」
+  → {{"title": "年収400万が5年で", "hook": "2000万貯めた方法！"}}
+
+出力形式（JSON）:
+{{"title": "タイトル", "hook": "フック"}}
+
+JSONのみ出力:"""
+
+    try:
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
+        result = json.loads(text)
+        return result.get("title", ""), result.get("hook", "")
+    except Exception as e:
+        logger.warning(f"AI短縮失敗: {e}")
+        return None, None
+
+
+def _split_theme(theme: str, use_ai: bool = True) -> tuple[str, str | None]:
     """テーマをタイトル部とフック部に分割"""
+    # AIで短縮を試みる
+    if use_ai:
+        ai_title, ai_hook = _shorten_theme_with_ai(theme)
+        if ai_title and ai_hook:
+            logger.info(f"AI短縮: {ai_title} / {ai_hook}")
+            return ai_title, ai_hook
+
     clean = re.sub(r'【[^】]*】', '', theme).strip()
 
+    # 改行禁止パターン（動詞活用の途中で切らない）
+    no_break_before = [
+        "ら", "たら", "ては", "ても", "てた", "てき", "った", "って",
+        "きた", "きて", "ない", "なく", "れた", "れて",
+    ]
+
+    def is_bad_break(pos: int) -> bool:
+        if pos >= len(clean):
+            return False
+        rest = clean[pos:pos + 4]
+        for nb in no_break_before:
+            if rest.startswith(nb):
+                return True
+        return False
+
+    # 明確なマーカーで分割
     for marker in ["方法が", "結果", "末路", "した結果", "だった"]:
         idx = clean.find(marker)
         if 0 < idx < len(clean) - 3:
@@ -45,11 +132,22 @@ def _split_theme(theme: str) -> tuple[str, str | None]:
 
     if len(clean) > 16:
         mid = len(clean) * 2 // 3
-        for sep in ["、", "で", "が", "を", "に", "は"]:
-            pos = clean[mid - 3:mid + 5].find(sep)
-            if pos >= 0:
-                c = mid - 3 + pos + 1
-                return clean[:c], clean[c:]
+        # 良い区切り位置を探す（禁止パターンを避ける）
+        for sep in ["…", "、", "で", "が", "を", "に", "は"]:
+            for offset in range(-3, 6):
+                pos = mid + offset
+                if 0 < pos < len(clean) - 3:
+                    if clean[pos - 1:pos] == sep or clean[pos] == sep:
+                        cut = pos if clean[pos] == sep else pos
+                        # 次の文字が禁止パターンでないかチェック
+                        if sep in clean[pos - 1:pos + 1]:
+                            cut = pos + 1 if clean[pos] == sep else pos
+                        if not is_bad_break(cut):
+                            return clean[:cut], clean[cut:]
+        # フォールバック: 禁止パターンを避けて分割
+        for pos in range(mid - 3, mid + 6):
+            if 0 < pos < len(clean) - 3 and not is_bad_break(pos):
+                return clean[:pos], clean[pos:]
         return clean[:mid], clean[mid:]
 
     return clean, None
@@ -273,39 +371,70 @@ def _smart_title_wrap(title: str, max_chars: int = 14) -> str:
         return title
 
     # 改行しやすい位置（助詞の後、句読点の後）
-    good_breaks = ["、", "。", "！", "？", "で", "が", "を", "に", "は", "の", "と", "も", "へ", "から", "まで", "より"]
-    # 改行してはいけない位置（単語の途中）- 後ろにこれらが来たら切らない
-    no_break_before = ["門", "家", "者", "員", "人", "生", "長", "部", "課", "係", "手", "方", "様", "氏", "君", "達"]
+    good_breaks = ["、", "。", "！", "？", "…", "から", "まで", "より", "けど", "ので"]
+    # 改行してはいけない位置 - 後ろにこれらが来たら切らない（動詞活用の途中を防ぐ）
+    no_break_before = [
+        # 複合語の一部
+        "門", "家", "者", "員", "人", "生", "長", "部", "課", "係", "手", "方", "様", "氏", "君", "達",
+        # 動詞活用・接続の途中（「したら」「してき」「しても」等を保護）
+        "ら", "たら", "ては", "ても", "てた", "てき", "った", "って", "ってき",
+        "きた", "きて", "ない", "なく", "なか", "れた", "れて", "せた", "せて",
+    ]
+
+    def is_bad_break(pos: int, text: str) -> bool:
+        """この位置で切ると読みにくいか"""
+        if pos >= len(text):
+            return False
+        if pos == 0:
+            return False
+        prev_char = text[pos - 1]
+        curr_char = text[pos]
+        # 数字の途中で切らない
+        if prev_char.isdigit() and curr_char.isdigit():
+            return True
+        # 数字+単位を分離しない（100万、500円 など）
+        if prev_char.isdigit() and curr_char in '万億千百円%':
+            return True
+        rest = text[pos:pos + 4]
+        for nb in no_break_before:
+            if rest.startswith(nb):
+                return True
+        return False
 
     lines = []
     remaining = title
 
     while remaining:
-        if len(remaining) <= max_chars + 2:
+        if len(remaining) <= max_chars + 3:
             lines.append(remaining)
             break
 
-        # 最適な切り位置を探す
-        best_pos = max_chars
-        found_good = False
+        # 最優先: 句読点「、」「。」の位置を探す（max_chars/2 以降）
+        best_pos = None
+        min_pos = max(max_chars // 2, 4)  # 最低でも半分は確保
 
-        # 良い切り位置を探す（後ろから前へ）
-        for i in range(min(max_chars + 2, len(remaining) - 1), max(max_chars - 5, 0), -1):
-            char = remaining[i]
-            next_char = remaining[i + 1] if i + 1 < len(remaining) else ""
-
-            # 次の文字が単語の一部なら切らない
-            if next_char in no_break_before:
-                continue
-
-            # 助詞や句読点の後は良い切り位置
-            for sep in good_breaks:
-                if remaining[max(0, i-len(sep)+1):i+1].endswith(sep):
+        # 句読点での分割を優先（近い位置から）
+        for sep in ["、", "。", "…"]:
+            for i in range(min_pos, min(max_chars + 4, len(remaining))):
+                if remaining[i] == sep and not is_bad_break(i + 1, remaining):
                     best_pos = i + 1
-                    found_good = True
                     break
-            if found_good:
+            if best_pos:
                 break
+
+        # 句読点がなければ、良い区切り位置を探す
+        if best_pos is None:
+            # max_charsに最も近い有効な位置を探す
+            candidates = []
+            for i in range(max(max_chars - 6, 4), min(max_chars + 4, len(remaining))):
+                if not is_bad_break(i + 1, remaining):
+                    candidates.append(i + 1)
+
+            if candidates:
+                # max_charsに最も近い位置を選ぶ
+                best_pos = min(candidates, key=lambda x: abs(x - max_chars))
+            else:
+                best_pos = max_chars
 
         lines.append(remaining[:best_pos])
         remaining = remaining[best_pos:]
@@ -342,14 +471,14 @@ def _build_thumbnail_prompt(
     # タイトルを適切な位置で改行（単語の途中で切らない）
     wrapped_title = _smart_title_wrap(title, max_chars=14)
 
+    # 文字はPILでオーバーレイするので、AIには背景・キャラクター・吹き出しのみ生成させる
     return f"""日本語の2chまとめ動画のYouTubeサムネイル画像を作成してください。
 
-★重要: すべてのテキストは日本語で正確に描画してください。英語禁止。★
-★重要: タイトルは以下の改行位置を守ること。単語の途中で改行しないこと。★
+★重要: 画面上部20%と下部25%は空白のまま残すこと（後で文字を追加する）★
+★重要: 吹き出しの中のテキストは日本語で正確に描画してください。★
 
 レイアウト:
-- 画面上部20%: 非常に大きな太い黒文字（白縁取り付き）で以下のタイトルを表示（改行位置を守ること）:
-「{wrapped_title}」
+- 画面上部20%: 空白（半透明の白背景でもOK）
 
 - 画面中央55%:
   1. 「いらすとや」スタイルのキャラクターを中央に配置
@@ -360,10 +489,10 @@ def _build_thumbnail_prompt(
      - フラットで明るい色使い（グラデーション禁止）
      - {char['appearance']}
      - {char['expression']}で{char['pose']}
-  2. キャラクターの周りに大きな吹き出しを5つ配置。吹き出しの中身は具体的な数字データ（感想やリアクションではなく、金額・割合・節約術などの有益情報）:
+  2. キャラクターの周りに大きな吹き出しを5つ配置。吹き出しの中身は具体的な数字データ:
 {bubble_section}
 
-{hook_line}
+- 画面下部25%: 空白（後で文字を追加する）
 
 - 背景: 日本の一万円札（福沢諭吉）が画面いっぱいに散らばっている
 
@@ -372,7 +501,7 @@ def _build_thumbnail_prompt(
 - 吹き出しはパステル/淡い色の背景に細い暗色枠、中は太い黒文字
 - 吹き出しの中身は「すごい」「草」「マジか」などの感想禁止。具体的な数字・金額・投資データなど有益情報のみ
 - 2chまとめ動画サムネイル風の情報量の多い構図
-- すべてのテキストは正確な日本語で"""
+- 画面上部と下部は空白を確保すること"""
 
 
 def _generate_with_ai(prompt: str, output_path: Path) -> Path | None:
@@ -462,38 +591,66 @@ def _draw_outlined_text(draw, xy, text, font, fill, outline_color, outline_w):
     draw.text((x, y), text, font=font, fill=fill)
 
 
-def _parse_highlight_segments(text: str) -> list[tuple[str, bool]]:
+def _parse_highlight_segments(text: str) -> list[tuple[str, str]]:
     """
-    テキストを強調部分と通常部分に分割
+    テキストを強調部分と通常部分に分割（参考アカウント風の色分け）
 
     Returns:
-        [(text, is_highlight), ...]
+        [(text, color_type), ...] - color_type: "normal", "number", "keyword"
     """
     import re
-    # 金額パターン: 数字+万/円/%/歳/年/ヶ月 等
-    pattern = r'(\d+(?:,\d+)*(?:\.\d+)?(?:万|円|%|歳|年|ヶ月|か月|カ月|倍|件|人|回|個|本|枚|kg|g|時間|分|秒|億|千万)?)'
+
+    # 強調キーワード（黄色ハイライト用）
+    HIGHLIGHT_KEYWORDS = [
+        "重要", "衝撃", "上位", "方法", "結果", "ポイント", "コツ", "秘訣",
+        "必見", "注意", "危険", "最強", "最悪", "本当", "実は", "驚き",
+    ]
+
+    # 数字+単位パターン（赤ハイライト用）
+    number_pattern = r'(\d+(?:,\d+)*(?:\.\d+)?(?:万|円|%|歳|年|ヶ月|か月|カ月|倍|件|人|回|個|本|枚|kg|g|時間|分|秒|億|千万)?)'
 
     segments = []
-    last_end = 0
+    remaining = text
 
-    for match in re.finditer(pattern, text):
-        # マッチ前の通常テキスト
-        if match.start() > last_end:
-            segments.append((text[last_end:match.start()], False))
-        # マッチした強調テキスト
-        segments.append((match.group(), True))
-        last_end = match.end()
+    while remaining:
+        # 数字パターンを探す
+        num_match = re.search(number_pattern, remaining)
 
-    # 残りの通常テキスト
-    if last_end < len(text):
-        segments.append((text[last_end:], False))
+        # キーワードを探す
+        keyword_match = None
+        keyword_pos = len(remaining)
+        matched_keyword = ""
+        for kw in HIGHLIGHT_KEYWORDS:
+            pos = remaining.find(kw)
+            if pos != -1 and pos < keyword_pos:
+                keyword_pos = pos
+                matched_keyword = kw
+                keyword_match = True
 
-    return segments if segments else [(text, False)]
+        # どちらが先に来るか
+        if num_match and (not keyword_match or num_match.start() <= keyword_pos):
+            # 数字が先
+            if num_match.start() > 0:
+                segments.append((remaining[:num_match.start()], "normal"))
+            segments.append((num_match.group(), "number"))
+            remaining = remaining[num_match.end():]
+        elif keyword_match:
+            # キーワードが先
+            if keyword_pos > 0:
+                segments.append((remaining[:keyword_pos], "normal"))
+            segments.append((matched_keyword, "keyword"))
+            remaining = remaining[keyword_pos + len(matched_keyword):]
+        else:
+            # どちらもない
+            segments.append((remaining, "normal"))
+            break
+
+    return segments if segments else [(text, "normal")]
 
 
 def _draw_highlighted_title(draw, center_x, y, text, font, outline_w):
     """
-    金額・数字を強調色で描画するタイトル
+    金額・数字・キーワードを強調色で描画するタイトル（参考アカウント風）
 
     Args:
         draw: ImageDraw
@@ -517,13 +674,16 @@ def _draw_highlighted_title(draw, center_x, y, text, font, outline_w):
     # 開始X座標（中央揃え）
     x = center_x - total_width // 2
 
-    # 各セグメントを描画
-    NORMAL_COLOR = (15, 15, 15)  # 通常: 黒
-    HIGHLIGHT_COLOR = (200, 30, 30)  # 強調: 赤
-    OUTLINE_COLOR = (255, 255, 255)  # 縁取り: 白
+    # 色設定（参考アカウント風）
+    COLORS = {
+        "normal": (15, 15, 15),       # 通常: 黒
+        "number": (220, 30, 30),      # 数字: 赤
+        "keyword": (220, 180, 0),     # キーワード: 黄色（金色系）
+    }
+    OUTLINE_COLOR = (255, 255, 255)   # 縁取り: 白
 
-    for i, (seg_text, is_highlight) in enumerate(segments):
-        fill = HIGHLIGHT_COLOR if is_highlight else NORMAL_COLOR
+    for i, (seg_text, color_type) in enumerate(segments):
+        fill = COLORS.get(color_type, COLORS["normal"])
         _draw_outlined_text(draw, (x, y), seg_text, font, fill, OUTLINE_COLOR, outline_w)
         x += segment_widths[i]
 
@@ -599,42 +759,98 @@ def _generate_with_pil(
         )
         draw.text((x1 + px, y1 + py), text, font=font_b, fill=(30, 30, 30))
 
-    # タイトル
-    font_t = _get_bold_font(60)
-    lines = _wrap_text(title, 15)
+    # タイトル（大きなフォント・最大2行）
+    font_t = _get_bold_font(78)  # 60→78に拡大
+    lines = _wrap_text(title, 14)[:2]  # 最大2行に制限
     sizes = [draw.textbbox((0, 0), l, font=font_t) for l in lines]
     sizes = [(s[2] - s[0], s[3] - s[1]) for s in sizes]
-    total_h = sum(h for _, h in sizes) + 8 * (len(sizes) - 1)
+    total_h = sum(h for _, h in sizes) + 12 * (len(sizes) - 1)
     bg_rgba = bg.convert("RGBA")
-    banner = Image.new("RGBA", (W, total_h + 28), (255, 255, 255, 215))
+    banner = Image.new("RGBA", (W, total_h + 36), (255, 255, 255, 230))
     bg_rgba.paste(banner, (0, 0), banner)
     draw2 = ImageDraw.Draw(bg_rgba)
-    y_pos = 14
+    y_pos = 18
     for i, line in enumerate(lines):
-        # 金額・数字を強調色で描画
-        _draw_highlighted_title(draw2, W // 2, y_pos, line, font_t, outline_w=4)
-        y_pos += sizes[i][1] + 8
+        # 金額・数字・キーワードを強調色で描画
+        _draw_highlighted_title(draw2, W // 2, y_pos, line, font_t, outline_w=5)
+        y_pos += sizes[i][1] + 12
     bg.paste(bg_rgba.convert("RGB"))
 
-    # フック
+    # フック（大きなフォント・最大2行）
     if hook:
         draw3 = ImageDraw.Draw(bg)
-        font_h = _get_bold_font(68)
-        hlines = _wrap_text(hook, 18)
+        font_h = _get_bold_font(82)  # 68→82に拡大
+        hlines = _wrap_text(hook, 14)[:2]  # 最大2行に制限
         hsizes = [draw3.textbbox((0, 0), l, font=font_h) for l in hlines]
         hsizes = [(s[2] - s[0], s[3] - s[1]) for s in hsizes]
-        ht = sum(h for _, h in hsizes) + 8 * (len(hsizes) - 1)
-        y_pos = H - ht - 18
+        ht = sum(h for _, h in hsizes) + 12 * (len(hsizes) - 1)
+        y_pos = H - ht - 24
         for i, line in enumerate(hlines):
             lw = hsizes[i][0]
             _draw_outlined_text(
                 draw3, ((W - lw) // 2, y_pos), line, font_h,
-                fill=(220, 20, 20), outline_color=(255, 255, 255), outline_w=6,
+                fill=(220, 20, 20), outline_color=(255, 255, 255), outline_w=7,
             )
-            y_pos += hsizes[i][1] + 8
+            y_pos += hsizes[i][1] + 12
 
     bg.save(output_path, "JPEG", quality=95)
     logger.info(f"PILフォールバック完了: {output_path}")
+
+
+def _overlay_text_on_thumbnail(img: Image.Image, title: str, hook: str | None) -> Image.Image:
+    """
+    AI生成画像に文字をオーバーレイ（参考アカウント風・大きな文字）
+
+    Args:
+        img: AI生成画像（RGB）
+        title: タイトル
+        hook: フック（下部に赤文字で表示）
+
+    Returns:
+        文字を追加した画像
+    """
+    draw = ImageDraw.Draw(img)
+
+    # タイトル（上部・色分け付き・大きなフォント）
+    if title:
+        font_t = _get_bold_font(78)  # 60→78に拡大
+        lines = _smart_title_wrap(title, max_chars=14).split("\n")[:2]  # 最大2行に制限
+        sizes = [draw.textbbox((0, 0), l, font=font_t) for l in lines]
+        sizes = [(s[2] - s[0], s[3] - s[1]) for s in sizes]
+        total_h = sum(h for _, h in sizes) + 12 * (len(sizes) - 1)
+
+        # 半透明の白背景バナー
+        img_rgba = img.convert("RGBA")
+        banner = Image.new("RGBA", (W, total_h + 36), (255, 255, 255, 230))
+        img_rgba.paste(banner, (0, 0), banner)
+        draw2 = ImageDraw.Draw(img_rgba)
+
+        y_pos = 18
+        for i, line in enumerate(lines):
+            _draw_highlighted_title(draw2, W // 2, y_pos, line, font_t, outline_w=5)
+            y_pos += sizes[i][1] + 12
+
+        img = img_rgba.convert("RGB")
+        draw = ImageDraw.Draw(img)
+
+    # フック（下部・赤文字・大きなフォント）
+    if hook:
+        font_h = _get_bold_font(82)  # 68→82に拡大
+        hlines = _smart_title_wrap(hook, max_chars=14).split("\n")[:2]  # 最大2行に制限
+        hsizes = [draw.textbbox((0, 0), l, font=font_h) for l in hlines]
+        hsizes = [(s[2] - s[0], s[3] - s[1]) for s in hsizes]
+        ht = sum(h for _, h in hsizes) + 12 * (len(hsizes) - 1)
+        y_pos = H - ht - 24
+
+        for i, line in enumerate(hlines):
+            lw = hsizes[i][0]
+            _draw_outlined_text(
+                draw, ((W - lw) // 2, y_pos), line, font_h,
+                fill=(220, 20, 20), outline_color=(255, 255, 255), outline_w=7,
+            )
+            y_pos += hsizes[i][1] + 12
+
+    return img
 
 
 # ====================================================================
@@ -689,8 +905,10 @@ def generate_thumbnail(
         try:
             img = Image.open(ai_result).convert("RGB")
             img = img.resize((W, H), Image.LANCZOS)
+            # AI生成画像に文字をオーバーレイ（色分け付き）
+            img = _overlay_text_on_thumbnail(img, title, hook)
             img.save(output_path, "JPEG", quality=95)
-            logger.info(f"サムネイル生成完了（AI）: {output_path}")
+            logger.info(f"サムネイル生成完了（AI + 文字オーバーレイ）: {output_path}")
         except Exception as e:
             logger.warning(f"AI画像読込失敗: {e}")
             _generate_with_pil(title, hook, bubbles, output_path)

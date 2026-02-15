@@ -172,24 +172,6 @@ jobs:
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
 
-      - name: Upload video artifact
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-video
-          path: generated/*.mp4
-          retention-days: 1
-
-      - name: Upload logs
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: generation-logs
-          path: generated/logs/
-          retention-days: 3
-
       - name: Stop VOICEVOX
         if: always()
         run: docker-compose down

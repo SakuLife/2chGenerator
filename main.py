@@ -17,7 +17,6 @@ from src.config import (
     GENERATED_DIR,
     YOUTUBE_API_KEY,
     GOOGLE_SHEETS_ID,
-    GOOGLE_DRIVE_FOLDER_ID,
     GOOGLE_SERVICE_ACCOUNT,
     GOOGLE_CLIENT_SECRETS_FILE,
     ensure_directories,
@@ -355,7 +354,6 @@ def main():
 
             tracker = VideoTracker(
                 spreadsheet_id=GOOGLE_SHEETS_ID,
-                drive_folder_id=GOOGLE_DRIVE_FOLDER_ID,
                 youtube_api_key=YOUTUBE_API_KEY,
                 client_secrets_file=GOOGLE_CLIENT_SECRETS_FILE,
             )
@@ -376,7 +374,6 @@ def main():
                 video_duration=video_duration,
                 generation_time=generation_time,
                 youtube_url=youtube_url,
-                upload_to_drive=bool(GOOGLE_DRIVE_FOLDER_ID),
                 gemini_tokens=gemini_tokens,
                 gemini_cost_jpy=gemini_cost_jpy,
                 kieai_credits=kieai_credits,

@@ -77,7 +77,6 @@ jobs:
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
           GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}
-          GOOGLE_DRIVE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           GOOGLE_CLIENT_SECRETS_FILE=client_secrets.json
           ENVEOF
 
@@ -89,17 +88,16 @@ jobs:
             echo "$SECRET" | base64 -d > client_secrets.json
           fi
 
-      - name: Write Google OAuth token (Drive/Sheets用)
+      - name: Write Google OAuth token (Sheets用)
         continue-on-error: true
         run: |
           TOKEN="${{ secrets.GOOGLE_TOKEN_JSON_B64 }}"
           if [ -n "$TOKEN" ]; then
             echo "$TOKEN" | base64 -d > google_token.json
-            cp google_token.json drive_token.json
             cp google_token.json sheets_token.json
             echo "Google OAuth token files created"
           else
-            echo "GOOGLE_TOKEN_JSON_B64 not set, skipping Drive/Sheets"
+            echo "GOOGLE_TOKEN_JSON_B64 not set, skipping Sheets"
           fi
 
       # テーマ自動選定（cronまたはtheme未指定時）
@@ -178,4 +176,4 @@ jobs:
 
       - name: Cleanup secrets
         if: always()
-        run: rm -f .env service_account.json client_secrets.json google_token.json drive_token.json sheets_token.json
+        run: rm -f .env service_account.json client_secrets.json google_token.json sheets_token.json

@@ -13,7 +13,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(1, str(Path(__file__).parent.parent.parent))
 
-from Skills.google import SheetsClient, DriveClient, YouTubeDataClient, GoogleAuth
+from Skills.google import SheetsClient, YouTubeDataClient, GoogleAuth
 
 from config import ROOT_DIR, GENERATED_DIR, GOOGLE_SERVICE_ACCOUNT
 from logger import logger
@@ -23,7 +23,7 @@ DEFAULT_SHEET_NAME = "生成ログ"
 
 SHEET_HEADERS = [
     "生成日時", "テーマ", "動画尺", "総生成時間",
-    "ファイル", "YouTube", "再生数", "いいね", "コメント", "Drive",
+    "ファイル", "YouTube", "再生数", "いいね", "コメント",
     "Gemini tokens", "Gemini ¥", "KieAI cr",
     "シーン数", "画像数", "台本(s)", "画像(s)", "音声(s)",
 ]
@@ -35,7 +35,6 @@ class VideoTracker:
     def __init__(
         self,
         spreadsheet_id: str,
-        drive_folder_id: str | None = None,
         youtube_api_key: str | None = None,
         client_secrets_file: str | None = None,
         service_account_file: str | None = None,
@@ -43,20 +42,17 @@ class VideoTracker:
         """
         Args:
             spreadsheet_id: 記録用スプレッドシートID
-            drive_folder_id: 動画保存先DriveフォルダID
             youtube_api_key: YouTube API キー（再生数取得用）
             client_secrets_file: OAuthクライアントシークレット
             service_account_file: サービスアカウントJSONファイル（優先使用）
         """
         self.spreadsheet_id = spreadsheet_id
-        self.drive_folder_id = drive_folder_id
         self.youtube_api_key = youtube_api_key
         self.client_secrets_file = client_secrets_file
         # サービスアカウントを優先使用
         self.service_account_file = service_account_file or GOOGLE_SERVICE_ACCOUNT
 
         self.sheets: SheetsClient | None = None
-        self.drive: DriveClient | None = None
         self.youtube: YouTubeDataClient | None = None
 
     def _ensure_sheets(self):
@@ -73,23 +69,6 @@ class VideoTracker:
             else:
                 raise RuntimeError(
                     "Sheets初期化に必要な認証情報がありません"
-                    "（service_account または client_secrets が必要）"
-                )
-
-    def _ensure_drive(self):
-        """Driveクライアントを初期化"""
-        if not self.drive:
-            if self.service_account_file:
-                self.drive = DriveClient(
-                    self.drive_folder_id,
-                    service_account_file=self.service_account_file
-                )
-            elif self.client_secrets_file:
-                auth = GoogleAuth(self.client_secrets_file, ROOT_DIR)
-                self.drive = DriveClient(self.drive_folder_id, auth=auth)
-            else:
-                raise RuntimeError(
-                    "Drive初期化に必要な認証情報がありません"
                     "（service_account または client_secrets が必要）"
                 )
 
@@ -139,7 +118,6 @@ class VideoTracker:
         video_duration: float,
         generation_time: float,
         youtube_url: str | None = None,
-        upload_to_drive: bool = True,
         sheet_name: str = DEFAULT_SHEET_NAME,
         gemini_tokens: int = 0,
         gemini_cost_jpy: float = 0,
@@ -157,7 +135,6 @@ class VideoTracker:
             video_duration: 動画の長さ（秒）
             generation_time: 生成にかかった時間（秒）
             youtube_url: YouTubeにアップロード済みの場合のURL
-            upload_to_drive: Driveにアップロードするか
             sheet_name: 記録先シート名
             gemini_tokens: Gemini API合計トークン数
             gemini_cost_jpy: Gemini推定コスト（円）
@@ -175,22 +152,9 @@ class VideoTracker:
         result = {
             "theme": theme,
             "video_path": str(video_path),
-            "drive_url": None,
             "youtube_url": youtube_url,
             "recorded_at": datetime.now().isoformat(),
         }
-
-        # Driveにアップロード
-        if upload_to_drive and self.drive_folder_id:
-            self._ensure_drive()
-
-            try:
-                logger.info(f"Google Driveにアップロード中: {video_path.name}")
-                upload_result = self.drive.upload_file(video_path)
-                result["drive_url"] = upload_result["url"]
-                logger.info(f"アップロード完了: {result['drive_url']}")
-            except Exception as e:
-                logger.error(f"Driveアップロードエラー: {e}")
 
         # スプレッドシートに記録
         self._ensure_sheets()
@@ -213,7 +177,6 @@ class VideoTracker:
                 "",  # 視聴回数（後で更新）
                 "",  # いいね数（後で更新）
                 "",  # コメント数（後で更新）
-                result["drive_url"] or "",
                 gemini_tokens or "",
                 f"{gemini_cost_jpy:.2f}" if gemini_cost_jpy else "",
                 kieai_credits or "",

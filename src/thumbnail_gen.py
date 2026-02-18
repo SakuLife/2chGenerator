@@ -553,8 +553,8 @@ BUBBLE_LAYOUTS = [
 
 
 def _get_bold_font(size: int) -> ImageFont.FreeTypeFont:
-    """太字日本語フォントを取得"""
-    asset = FONTS_DIR / "NotoSansJP-Bold.ttf"
+    """極太日本語フォントを取得"""
+    asset = FONTS_DIR / "NotoSansJP-Black.ttf"
     if asset.exists():
         try:
             return ImageFont.truetype(str(asset), size)

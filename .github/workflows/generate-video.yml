@@ -37,6 +37,10 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: video-generation
+  cancel-in-progress: true
+
 jobs:
   generate:
     runs-on: self-hosted
@@ -56,6 +60,7 @@ jobs:
 
       - name: Start VOICEVOX (Docker)
         run: |
+          docker-compose down --remove-orphans 2>/dev/null || true
           docker-compose up -d voicevox
           echo "Waiting for VOICEVOX API..."
           for i in $(seq 1 30); do

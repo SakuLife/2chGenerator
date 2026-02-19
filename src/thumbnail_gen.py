@@ -471,14 +471,14 @@ def _build_thumbnail_prompt(
     # タイトルを適切な位置で改行（単語の途中で切らない）
     wrapped_title = _smart_title_wrap(title, max_chars=14)
 
-    # 文字はPILでオーバーレイするので、AIには背景・キャラクター・吹き出しのみ生成させる
     return f"""日本語の2chまとめ動画のYouTubeサムネイル画像を作成してください。
 
-★重要: 画面上部20%と下部25%は空白のまま残すこと（後で文字を追加する）★
-★重要: 吹き出しの中のテキストは日本語で正確に描画してください。★
+★重要: すべてのテキストは日本語で正確に描画してください。英語禁止。★
+★重要: タイトルは以下の改行位置を守ること。単語の途中で改行しないこと。★
 
 レイアウト:
-- 画面上部20%: 空白（半透明の白背景でもOK）
+- 画面上部20%: 非常に大きな太い黒文字（白縁取り付き）で以下のタイトルを表示（改行位置を守ること）:
+「{wrapped_title}」
 
 - 画面中央55%:
   1. 「いらすとや」スタイルのキャラクターを中央に配置
@@ -489,10 +489,10 @@ def _build_thumbnail_prompt(
      - フラットで明るい色使い（グラデーション禁止）
      - {char['appearance']}
      - {char['expression']}で{char['pose']}
-  2. キャラクターの周りに大きな吹き出しを5つ配置。吹き出しの中身は具体的な数字データ:
+  2. キャラクターの周りに大きな吹き出しを5つ配置。吹き出しの中身は具体的な数字データ（感想やリアクションではなく、金額・割合・節約術などの有益情報）:
 {bubble_section}
 
-- 画面下部25%: 空白（後で文字を追加する）
+{hook_line}
 
 - 背景: 日本の一万円札（福沢諭吉）が画面いっぱいに散らばっている
 
@@ -501,7 +501,7 @@ def _build_thumbnail_prompt(
 - 吹き出しはパステル/淡い色の背景に細い暗色枠、中は太い黒文字
 - 吹き出しの中身は「すごい」「草」「マジか」などの感想禁止。具体的な数字・金額・投資データなど有益情報のみ
 - 2chまとめ動画サムネイル風の情報量の多い構図
-- 画面上部と下部は空白を確保すること"""
+- すべてのテキストは正確な日本語で"""
 
 
 def _generate_with_ai(prompt: str, output_path: Path) -> Path | None:
@@ -905,10 +905,8 @@ def generate_thumbnail(
         try:
             img = Image.open(ai_result).convert("RGB")
             img = img.resize((W, H), Image.LANCZOS)
-            # AI生成画像に文字をオーバーレイ（色分け付き）
-            img = _overlay_text_on_thumbnail(img, title, hook)
             img.save(output_path, "JPEG", quality=95)
-            logger.info(f"サムネイル生成完了（AI + 文字オーバーレイ）: {output_path}")
+            logger.info(f"サムネイル生成完了（AI）: {output_path}")
         except Exception as e:
             logger.warning(f"AI画像読込失敗: {e}")
             _generate_with_pil(title, hook, bubbles, output_path)

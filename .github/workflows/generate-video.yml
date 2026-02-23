@@ -61,6 +61,13 @@ jobs:
       - name: Start VOICEVOX (Docker)
         run: |
           docker-compose down --remove-orphans 2>/dev/null || true
+          # 前回のコンテナが残っている場合に備え、ポート50021を占有するコンテナを強制停止
+          OLD_CID=$(docker ps -q --filter "publish=50021" 2>/dev/null)
+          if [ -n "$OLD_CID" ]; then
+            echo "Stopping old container using port 50021: $OLD_CID"
+            docker stop "$OLD_CID" 2>/dev/null || true
+            docker rm -f "$OLD_CID" 2>/dev/null || true
+          fi
           docker-compose up -d voicevox
           echo "Waiting for VOICEVOX API..."
           for i in $(seq 1 30); do

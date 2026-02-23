@@ -5,6 +5,7 @@ YouTube競合分析 + 自チャンネル分析 + LLMによるテーマ生成
 """
 
 import json
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -310,7 +311,24 @@ class ThemeSuggester:
         )
 
         content = response.text.strip()
-        themes = [line.strip() for line in content.split("\n") if line.strip()]
+        themes = []
+        for line in content.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # 番号プレフィックスを除去（"1. ", "1) ", "- " 等）
+            line = re.sub(r'^[\d]+[.)\-]\s*', '', line).strip()
+            line = re.sub(r'^[-・]\s*', '', line).strip()
+            if not line:
+                continue
+            # カテゴリ見出し・メモ的な行を除外（短すぎる、「系」「:」で終わる等）
+            if len(line) < 10:
+                logger.info(f"  除外（短すぎる）: {line}")
+                continue
+            if re.match(r'^(成功|失敗|損失|知識|ノウハウ|達成)', line) and len(line) < 20:
+                logger.info(f"  除外（カテゴリ見出し）: {line}")
+                continue
+            themes.append(line)
 
         logger.info(f"テーマ生成完了: {len(themes)}個")
 

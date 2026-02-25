@@ -43,7 +43,7 @@ concurrency:
 
 jobs:
   generate:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       PYTHONUTF8: "1"
@@ -53,22 +53,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip setuptools wheel --break-system-packages
-          pip install -r requirements.txt --break-system-packages
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
 
       - name: Start VOICEVOX (Docker)
         run: |
-          docker-compose down --remove-orphans 2>/dev/null || true
-          # 前回のコンテナが残っている場合に備え、ポート50021を占有するコンテナを強制停止
-          OLD_CID=$(docker ps -q --filter "publish=50021" 2>/dev/null)
-          if [ -n "$OLD_CID" ]; then
-            echo "Stopping old container using port 50021: $OLD_CID"
-            docker stop "$OLD_CID" 2>/dev/null || true
-            docker rm -f "$OLD_CID" 2>/dev/null || true
-          fi
-          docker-compose up -d voicevox
+          docker compose up -d voicevox
           echo "Waiting for VOICEVOX API..."
           for i in $(seq 1 30); do
             sleep 2
@@ -83,14 +81,14 @@ jobs:
 
       - name: Create .env from secrets
         run: |
-          cat > .env << 'ENVEOF'
+          cat > .env <<EOF
           KIEAI_API_KEY=${{ secrets.KIEAI_API_KEY }}
           KIEAI_API_BASE=https://api.kie.ai
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY=${{ secrets.YOUTUBE_API_KEY }}
           GOOGLE_SHEETS_ID=${{ secrets.GOOGLE_SHEETS_ID }}
           GOOGLE_CLIENT_SECRETS_FILE=client_secrets.json
-          ENVEOF
+          EOF
 
       - name: Write client_secrets.json
         continue-on-error: true
@@ -117,7 +115,7 @@ jobs:
         if: inputs.theme == '' || github.event_name == 'schedule'
         id: theme
         run: |
-          THEME=$(python3 -W ignore -c "
+          THEME=$(python -W ignore -c "
           import sys, logging
           logging.disable(logging.WARNING)
           sys.path.insert(0, 'src')
@@ -175,8 +173,8 @@ jobs:
             ARGS="$ARGS --record"
           fi
 
-          echo "Running: python3 main.py $ARGS"
-          eval "python3 main.py $ARGS"
+          echo "Running: python main.py $ARGS"
+          eval "python main.py $ARGS"
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
@@ -184,7 +182,7 @@ jobs:
 
       - name: Stop VOICEVOX
         if: always()
-        run: docker-compose down
+        run: docker compose down
 
       - name: Cleanup secrets
         if: always()

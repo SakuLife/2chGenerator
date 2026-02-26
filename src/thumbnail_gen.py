@@ -566,6 +566,8 @@ def _get_bold_font(size: int) -> ImageFont.FreeTypeFont:
         cands = [
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf",
         ]
 
     for fp in cands:

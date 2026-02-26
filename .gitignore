@@ -15,8 +15,8 @@ generated/
 # Assets内のメディアは許可（BGMのみ。背景動画は大きいのでLFS or 手動管理）
 !assets/**/*.mp3
 
-# 背景動画（GitHub 100MB制限超過のため除外）
-assets/images/backgrounds/*.mp4
+# 背景動画（44MB超の大きいファイルのみ除外）
+assets/images/backgrounds/盛り.mp4
 
 # Credentials / Secrets
 chgenerator-*.json

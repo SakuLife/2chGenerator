@@ -256,6 +256,8 @@ def get_japanese_font(fontsize: int) -> ImageFont.FreeTypeFont:
         font_candidates = [
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Bold.otf",
         ]
         for fp in font_candidates:
             if os.path.exists(fp):
@@ -266,7 +268,9 @@ def get_japanese_font(fontsize: int) -> ImageFont.FreeTypeFont:
                     continue
 
     # アセットフォントをフォールバック
-    asset_font = FONTS_DIR / "NotoSansJP-Bold.ttf"
+    asset_font = FONTS_DIR / "NotoSansJP-Black.ttf"
+    if not asset_font.exists():
+        asset_font = FONTS_DIR / "NotoSansJP-Bold.ttf"
     if font is None and asset_font.exists():
         try:
             font = ImageFont.truetype(str(asset_font), fontsize)

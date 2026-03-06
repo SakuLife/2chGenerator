@@ -2,8 +2,6 @@ name: Generate Video
 
 on:
   schedule:
-    # 毎日 4:00 JST (19:00 UTC 前日) → 6:00 JST アップロード
-    - cron: '0 19 * * *'
     # 毎日 14:00 JST (05:00 UTC) → 18:00 JST アップロード
     - cron: '0 5 * * *'
   workflow_dispatch:
@@ -28,7 +26,6 @@ on:
         type: choice
         options:
           - 'auto'
-          - '6'
           - '18'
         default: 'auto'
       record:
@@ -138,12 +135,7 @@ jobs:
         id: publish
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            HOUR_UTC=$(date -u +%H)
-            if [ "$HOUR_UTC" = "19" ]; then
-              echo "HOUR=6" >> "$GITHUB_OUTPUT"
-            else
-              echo "HOUR=18" >> "$GITHUB_OUTPUT"
-            fi
+            echo "HOUR=18" >> "$GITHUB_OUTPUT"
           elif [ "${{ inputs.publish_hour }}" != "auto" ] && [ -n "${{ inputs.publish_hour }}" ]; then
             echo "HOUR=${{ inputs.publish_hour }}" >> "$GITHUB_OUTPUT"
           else

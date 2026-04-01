@@ -886,6 +886,19 @@ def generate_thumbnail(
 
     # テーマ分割 & 吹き出しテキスト準備
     title, hook = _split_theme(theme)
+
+    # サムネテキストの品質チェック（数値誤り等を修正）
+    try:
+        from quality_reviewer import review_thumbnail_text
+
+        thumb_review = review_thumbnail_text(theme, title, hook or "")
+        if not thumb_review["ok"]:
+            logger.info(f"サムネテキスト修正: {thumb_review['reason']}")
+            title = thumb_review["title"]
+            hook = thumb_review["hook"]
+    except Exception as e:
+        logger.debug(f"サムネ品質チェックスキップ: {e}")
+
     bubbles = _extract_bubble_texts(script_path, theme)
     bubbles = _mask_bubble_texts(bubbles)
     logger.info(f"タイトル: {title}")

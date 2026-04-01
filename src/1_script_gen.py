@@ -351,7 +351,12 @@ def _get_token_counts(response) -> tuple[int, int, int]:
         return 0, 0, 0
 
 
-def generate_script(theme: str, output_filename: str = "script.json", use_reference: bool = True) -> dict:
+def generate_script(
+    theme: str,
+    output_filename: str = "script.json",
+    use_reference: bool = True,
+    feedback: str = "",
+) -> dict:
     """
     テーマに基づいて台本を2パスで生成
 
@@ -359,6 +364,7 @@ def generate_script(theme: str, output_filename: str = "script.json", use_refere
         theme: 動画のテーマ
         output_filename: 出力ファイル名
         use_reference: 参考データを使用するか（デフォルト: True）
+        feedback: パフォーマンス分析からのフィードバック（台本改善指示）
 
     Returns:
         dict: {
@@ -384,12 +390,17 @@ def generate_script(theme: str, output_filename: str = "script.json", use_refere
         reference_texts = _load_reference_transcripts(max_samples=2)
         reference_section = _build_reference_section(reference_texts)
 
+    # ===== フィードバックセクション =====
+    feedback_section = ""
+    if feedback:
+        feedback_section = f"\n{feedback}\n"
+
     # ===== パート1: 前半生成 =====
     logger.info(f"テーマ「{theme}」で台本を生成中... (パート1/2: 前半)")
 
     prompt1 = PROMPT_PART1.format(
         theme=theme,
-        common_rules=_COMMON_RULES,
+        common_rules=_COMMON_RULES + feedback_section,
         reference_section=reference_section,
     )
 

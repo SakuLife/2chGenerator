@@ -224,6 +224,7 @@ class ThemeSuggester:
         trending_data: list[dict] | None = None,
         past_themes: list[str] | None = None,
         count: int = 10,
+        performance_feedback: str = "",
     ) -> list[str]:
         """
         LLM（Gemini）でテーマを生成
@@ -234,12 +235,16 @@ class ThemeSuggester:
             trending_data: トレンドデータ
             past_themes: 過去に使用したテーマ（重複排除用）
             count: 生成するテーマ数
+            performance_feedback: パフォーマンス分析からのフィードバック
 
         Returns:
             テーマのリスト
         """
         # コンテキストを構築
         context_parts = []
+
+        if performance_feedback:
+            context_parts.append(performance_feedback)
 
         if competitor_data:
             top_titles = [v["title"] for v in competitor_data.get("top_videos", [])[:10]]
@@ -358,6 +363,7 @@ class ThemeSuggester:
         competitor_data = None
         my_channel_data = None
         trending_data = None
+        performance_feedback = ""
 
         if use_competitor_analysis:
             competitor_data = self.analyze_competitors()
@@ -367,6 +373,17 @@ class ThemeSuggester:
 
         if use_trending:
             trending_data = self.search_trending()
+
+        # パフォーマンスフィードバックを取得
+        try:
+            from performance_analyzer import PerformanceAnalyzer
+
+            analyzer = PerformanceAnalyzer(spreadsheet_id=self.spreadsheet_id)
+            performance_feedback = analyzer.get_feedback_for_theme_suggestion()
+            if performance_feedback:
+                logger.info("パフォーマンスフィードバックをテーマ提案に反映")
+        except Exception as e:
+            logger.debug(f"パフォーマンスフィードバック取得スキップ: {e}")
 
         # 過去テーマを取得（重複排除用）
         past_themes = self.get_past_themes(days=30)
@@ -380,6 +397,7 @@ class ThemeSuggester:
             trending_data=trending_data,
             past_themes=past_themes,
             count=generate_count,
+            performance_feedback=performance_feedback,
         )
 
         # 過去テーマとの類似度フィルタ

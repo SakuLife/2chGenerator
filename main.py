@@ -242,6 +242,7 @@ def main():
         kieai_credits = 0
         scene_count = 0
         image_count = 0
+        quality_score = 0
 
         logger.info(f"[モード] 全自動生成")
         logger.info(f"テーマ: {args.theme}")
@@ -250,12 +251,26 @@ def main():
         else:
             logger.info(f"画像生成: {args.image_method.upper()}")
 
+        # Step 0: パフォーマンスフィードバック取得
+        script_feedback = ""
+        try:
+            from src.performance_analyzer import PerformanceAnalyzer
+
+            analyzer = PerformanceAnalyzer()
+            script_feedback = analyzer.get_feedback_for_script_gen()
+            if script_feedback:
+                logger.info("過去動画フィードバックを台本生成に反映")
+        except Exception as e:
+            logger.debug(f"フィードバック取得スキップ: {e}")
+
         # Step 1: 台本生成
         logger.info("=" * 60)
         logger.info("Step 1/4: 台本生成中...")
         logger.info("=" * 60)
         t0 = time.time()
-        script_result = script_gen.generate_script(args.theme)
+        script_result = script_gen.generate_script(
+            args.theme, feedback=script_feedback
+        )
         step_times["script"] = time.time() - t0
 
         # generate_script() は dict を返す
@@ -264,6 +279,30 @@ def main():
         gemini_cost_jpy += script_result.get("gemini_cost_jpy", 0)
         scene_count = len(script_data)
         script_path = SCRIPTS_DIR / "script.json"
+
+        # Step 1.5: 品質レビュー
+        logger.info("=" * 60)
+        logger.info("  品質レビュー中...")
+        logger.info("=" * 60)
+        try:
+            from src.quality_reviewer import review_script
+
+            review_result = review_script(args.theme, script_data)
+            quality_score = review_result["quality_score"]
+
+            if review_result["fixes_applied"]:
+                # 修正があれば台本を更新して保存し直す
+                script_data = review_result["script"]
+                scene_count = len(script_data)
+                import json as _json
+
+                with open(script_path, "w", encoding="utf-8") as f:
+                    _json.dump(script_data, f, ensure_ascii=False, indent=2)
+                logger.info(f"台本修正適用: {', '.join(review_result['fixes_applied'])}")
+            else:
+                logger.info(f"品質OK（スコア: {quality_score}/100）")
+        except Exception as e:
+            logger.warning(f"品質レビュースキップ: {e}")
 
         # Step 2: 画像生成（スキップ可能）
         if not args.no_images:
@@ -383,6 +422,30 @@ def main():
             )
 
             logger.info("記録完了！")
+
+        # パフォーマンス分析（次回生成へのフィードバック更新）
+        if GOOGLE_SHEETS_ID:
+            try:
+                from src.performance_analyzer import PerformanceAnalyzer
+
+                logger.info("=" * 60)
+                logger.info("  パフォーマンス分析・フィードバック更新中...")
+                logger.info("=" * 60)
+                analyzer = PerformanceAnalyzer()
+                analysis = analyzer.analyze()
+                if analysis.get("insights"):
+                    logger.info(f"分析完了: {analysis['total_videos']}本, "
+                                f"平均再生数: {analysis['avg_views']:,}")
+                    for insight in analysis["insights"][:3]:
+                        logger.info(f"  -> {insight}")
+            except Exception as e:
+                logger.debug(f"パフォーマンス分析スキップ: {e}")
+
+        # 品質レポート
+        logger.info("=" * 60)
+        logger.info("  品質サマリー")
+        logger.info("=" * 60)
+        logger.info(f"品質スコア: {quality_score}/100")
 
         return
 
